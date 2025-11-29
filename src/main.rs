@@ -6,8 +6,8 @@ fn main() {
     println!("Logs from your program will appear here!");
         
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-        for stream in listener.incoming() {
-
+    for stream in listener.incoming() {
+        std::thread::spawn(||
             match stream {
                 Ok(mut stream) => {
                     println!("accepted new connection");
@@ -26,5 +26,6 @@ fn main() {
                     println!("error: {}", e);
                 }
             }
-        }
+        );
+    }
 }
