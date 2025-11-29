@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::HashMap, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock}};
+use std::{collections::HashMap, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
 
 fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
     let string_buf = std::str::from_utf8(buf).unwrap();
@@ -44,13 +44,42 @@ fn main() {
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "SET" => {
-                                            let result = local_database.write().unwrap().insert(commands[1].clone(), commands[2].clone());
-                                            stream.write_all(b"+OK\r\n").unwrap()
+                                            match commands.iter().skip(3).next(){
+                                                Some(str) => {
+                                                    println!("{}", str);
+                                                    match str.to_uppercase().as_str(){
+                                                        "PX" => {
+                                                            let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
+                                                            println!("{:?}", timeout);
+                                                            local_database.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
+                                                        },
+                                                        "EX" => {
+                                                            let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
+                                                            local_database.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
+                                                        },
+                                                        _ => (),
+                                                    }
+                                                }
+                                                None => {
+                                                    local_database.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), None));
+                                                }
+                                            }
+                                            
+                                            stream.write_all(b"+OK\r\n").unwrap()   
                                         },
                                         "GET" => {
                                             if let Some(value) = local_database.read().unwrap().get(&commands[1]){
-                                                let response = format!("${}\r\n{}\r\n", value.len(), value);
-                                                stream.write_all(response.as_bytes()).unwrap()
+                                                if let Some(timeout) = value.1{
+                                                    if Instant::now() < timeout {
+                                                        let response = format!("${}\r\n{}\r\n", value.0.len(), value.0);
+                                                        stream.write_all(response.as_bytes()).unwrap()
+                                                    } else {
+                                                        stream.write_all(b"$-1\r\n").unwrap()
+                                                    } 
+                                                } else {
+                                                    let response = format!("${}\r\n{}\r\n", value.0.len(), value.0);
+                                                    stream.write_all(response.as_bytes()).unwrap()
+                                                }
                                             } else {
                                                 stream.write_all(b"$-1\r\n").unwrap()
                                             }
