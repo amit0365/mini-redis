@@ -49,9 +49,9 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         match list_guard.get_mut(&command[1]){
             Some(list) => {
                 let mut popped_list = Vec::new();
-                let len = match command[2].parse::<usize>(){
-                    Ok(n) => n,
-                    Err(_) => 1
+                let len = match command.iter().skip(2).next(){
+                    Some(n) => n.parse::<usize>().unwrap(), //remove unwrap
+                    None => 1
                 };
 
                 for _ in 0..len{
