@@ -134,10 +134,19 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             receiver
         };
 
-        match receiver.recv(){
-            Ok((key, value)) => encode_resp_array(&vec![key, value]),
-            Err(e) => format!("$\r\n"), // fix this
+        let timeout: f64 = command.last().unwrap().parse().unwrap();
+        if timeout == 0.0 {
+            match receiver.recv(){
+                Ok((key, value)) => encode_resp_array(&vec![key, value]),
+                Err(e) => format!("$\r\n"), // fix this
+            }
+        } else {
+            match receiver.recv_timeout(Duration::from_secs_f64(timeout)){
+                Ok((key, value)) => encode_resp_array(&vec![key, value]),
+                Err(e) => format!("$\r\n"), // fix this
+            }
         }
+
     }
     
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
@@ -151,8 +160,8 @@ impl RedisState<String, String, (String, Option<Instant>)>{
                     VecDeque::new()
                 } else if stop >= vec.len(){
                     vec.range(start..).cloned().collect()
-                } else if start >= stop{
-                    VecDeque::new()
+                } else if start > stop{
+                    VecDeque::new() // removed stop=start should be covered by last else
                 } else {
                     vec.range(start..=stop).cloned().collect()
                 }
