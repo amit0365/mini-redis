@@ -112,8 +112,8 @@ fn main() {
                 loop{
                         match stream.read(&mut buf){
                             Ok(0) => break,
-                            Ok(_) => {
-                                let parsed_commands = parse_resp(&buf);
+                            Ok(n) => {
+                                let parsed_commands = parse_resp(&buf[..n]);
                                 if let Some(commands) = parsed_commands{
                                     match commands[0].to_uppercase().as_str(){
                                         "PING" => stream.write_all(b"+PONG\r\n").unwrap(),
