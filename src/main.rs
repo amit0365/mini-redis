@@ -25,10 +25,10 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
         let list_guard = self.list.lock().unwrap();
-        let start = start.parse::<usize>().unwrap();
-        let stop = stop.parse::<usize>().unwrap();
         let array = match list_guard.get(key){
             Some(vec) => {
+                let start = parse_wrapback(start.parse::<i64>().unwrap(), vec.len());
+                let stop = parse_wrapback(stop.parse::<i64>().unwrap(), vec.len());
                 if start >= vec.len(){
                     Vec::new()
                 } else if stop >= vec.len(){
@@ -43,6 +43,17 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         };
         encode_resp_array(&array)
     } 
+}
+
+fn parse_wrapback(idx: i64, len: usize) -> usize{
+    if idx.is_negative() {
+        let idx_abs= idx.unsigned_abs() as usize;
+        if idx_abs <= len {
+            len - idx.unsigned_abs() as usize
+        } else {
+            0
+        }
+    } else { idx.try_into().unwrap() }
 }
 
 fn encode_resp_array(array: &Vec<String>) -> String{
