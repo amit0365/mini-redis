@@ -1,10 +1,10 @@
 #![allow(unused_imports)]
-use std::{collections::HashMap, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use std::{collections::{HashMap, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
 
 #[derive(Clone)]
 struct RedisState<K, E, V> {
     map: Arc<RwLock<HashMap<K, V>>>,
-    list: Arc<Mutex<HashMap<K, Vec<E>>>>,
+    list: Arc<Mutex<HashMap<K, VecDeque<E>>>>,
 }
 
 impl RedisState<String, String, (String, Option<Instant>)>{
@@ -18,8 +18,20 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         let mut list_guard = self.list.lock().unwrap();
         let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
         list_guard.entry(command[1].clone())
-        .or_insert(Vec::new())
+        .or_insert(VecDeque::new())
         .extend(items);
+        list_guard.get(&command[1]).unwrap().len().to_string()
+    } 
+
+    fn lpush(&mut self, command: &Vec<String>) -> String {
+        let mut list_guard = self.list.lock().unwrap();
+        let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
+        for item in items.iter() {
+            list_guard.entry(command[1].clone())
+            .or_insert(VecDeque::new())
+            .push_front(item.clone());
+        }
+
         list_guard.get(&command[1]).unwrap().len().to_string()
     } 
 
@@ -29,17 +41,20 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             Some(vec) => {
                 let start = parse_wrapback(start.parse::<i64>().unwrap(), vec.len());
                 let stop = parse_wrapback(stop.parse::<i64>().unwrap(), vec.len());
+                println!("{}", start);
+                println!("{}", stop);
+
                 if start >= vec.len(){
-                    Vec::new()
+                    VecDeque::new()
                 } else if stop >= vec.len(){
-                    vec[start..].to_vec()
+                    vec.range(start..).cloned().collect()
                 } else if start >= stop{
-                    Vec::new()
+                    VecDeque::new()
                 } else {
-                    vec[start..=stop].to_vec()
+                    vec.range(start..=stop).cloned().collect()
                 }
             },
-            None => Vec::new()
+            None => VecDeque::new()
         };
         encode_resp_array(&array)
     } 
@@ -56,7 +71,7 @@ fn parse_wrapback(idx: i64, len: usize) -> usize{
     } else { idx.try_into().unwrap() }
 }
 
-fn encode_resp_array(array: &Vec<String>) -> String{
+fn encode_resp_array(array: &VecDeque<String>) -> String{
     let mut encoded_array = format!["*{}\r\n",array.len()];
     for item in array {
         encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item));
@@ -149,6 +164,11 @@ fn main() {
                                         },
                                         "RPUSH" => {
                                             let len = local_state.rpush(&commands);
+                                            let response = format!(":{}\r\n", len);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "LPUSH" => {
+                                            let len = local_state.lpush(&commands);
                                             let response = format!(":{}\r\n", len);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
