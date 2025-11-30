@@ -48,20 +48,27 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         let mut list_guard = self.list.lock().unwrap();
         match list_guard.get_mut(&command[1]){
             Some(list) => {
-                let mut popped_list = Vec::new();
-                let len = match command.iter().skip(2).next(){
-                    Some(n) => n.parse::<usize>().unwrap(), //remove unwrap
-                    None => 1
-                };
+                match command.iter().skip(2).next(){
+                    Some(n) => {
+                        let mut popped_list = Vec::new();
+                        let len = n.parse::<usize>().unwrap(); //remove unwrap
+                        for _ in 0..len{
+                            match list.pop_front(){
+                                Some(popped) => popped_list.push(popped),
+                                None => (),
+                            }
+                        }
 
-                for _ in 0..len{
-                    match list.pop_front(){
-                        Some(popped) => popped_list.push(popped),
-                        None => (),
-                    }
+                        encode_resp_array(&popped_list)
+                    },
+
+                    None => {
+                        match list.pop_front(){
+                            Some(popped) => format!("${}\r\n{}\r\n", popped.len(), popped),
+                            None => format!("$-1\r\n"),
+                        }
+                    },
                 }
-
-                encode_resp_array(&popped_list)
             },
 
             None => format!("$-1\r\n")
@@ -104,11 +111,6 @@ fn parse_wrapback(idx: i64, len: usize) -> usize{
 }
 
 fn encode_resp_array(array: &Vec<String>) -> String{
-    if array.is_empty(){
-        return format!("$-1\r\n")
-    } else if array.len() == 1 {
-        return format!("${}\r\n", array[0])
-    }
     let mut encoded_array = format!["*{}\r\n", array.len()];
     for item in array {
         encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item));
