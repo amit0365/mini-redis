@@ -32,6 +32,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
     }
 
     fn rpush(&mut self, command: &Vec<String>) -> String {
+        let mut count = String::new();
         let key = &command[1];
 
         {
@@ -40,6 +41,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             list_guard.entry(key.clone())
             .or_insert(VecDeque::new())
             .extend(items);
+            count = list_guard.get(key).unwrap().len().to_string();
         }
         
         let mut waiters_guard = self.list_state.waiters.lock().unwrap();
@@ -54,8 +56,9 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             }
         }
 
-        let list_guard = self.list_state.list.lock().unwrap();
-        list_guard.get(key).unwrap().len().to_string()
+        // let list_guard = self.list_state.list.lock().unwrap();
+        // list_guard.get(key).unwrap().len().to_string()
+        count
     } 
 
     fn lpush(&mut self, command: &Vec<String>) -> String {
