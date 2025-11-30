@@ -1,6 +1,28 @@
 #![allow(unused_imports)]
 use std::{collections::HashMap, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
 
+#[derive(Clone)]
+struct RedisState<K, E, V> {
+    map: Arc<RwLock<HashMap<K, V>>>,
+    list: Arc<Mutex<HashMap<K, Vec<E>>>>,
+}
+
+impl RedisState<String, String, (String, Option<Instant>)>{
+    fn new() -> Self{
+        let map = Arc::new(RwLock::new(HashMap::new()));
+        let list = Arc::new(Mutex::new(HashMap::new()));
+        RedisState { map, list }
+    }
+
+    fn rpush(&mut self, command: &Vec<String>) -> String {
+        let mut list_guard = self.list.lock().unwrap();
+        list_guard.entry(command[1].clone())
+        .or_insert(Vec::new())
+        .push(command[2].clone());
+        list_guard.get(&command[1]).unwrap().len().to_string()
+    } 
+}
+
 fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
     let string_buf = std::str::from_utf8(buf).unwrap();
     let tokens = string_buf.split("\r\n").collect::<Vec<&str>>();
@@ -20,10 +42,10 @@ fn main() {
     println!("Logs from your program will appear here!");
         
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let database = Arc::new(RwLock::new(HashMap::new()));
+        let state = RedisState::new();
     
     for stream in listener.incoming() {
-        let local_database = database.clone();
+        let mut local_state = state.clone();
         std::thread::spawn(move ||
             match stream {
                 Ok(mut stream) => {
@@ -51,24 +73,24 @@ fn main() {
                                                         "PX" => {
                                                             let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
                                                             println!("{:?}", timeout);
-                                                            local_database.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
+                                                            local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
                                                         },
                                                         "EX" => {
                                                             let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
-                                                            local_database.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
+                                                            local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
                                                         },
                                                         _ => (),
                                                     }
                                                 }
                                                 None => {
-                                                    local_database.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), None));
+                                                    local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), None));
                                                 }
                                             }
                                             
                                             stream.write_all(b"+OK\r\n").unwrap()   
                                         },
                                         "GET" => {
-                                            if let Some(value) = local_database.read().unwrap().get(&commands[1]){
+                                            if let Some(value) = local_state.map.read().unwrap().get(&commands[1]){
                                                 if let Some(timeout) = value.1{
                                                     if Instant::now() < timeout {
                                                         let response = format!("${}\r\n{}\r\n", value.0.len(), value.0);
@@ -83,7 +105,13 @@ fn main() {
                                             } else {
                                                 stream.write_all(b"$-1\r\n").unwrap()
                                             }
-                                        }
+                                        },
+                                        "RPUSH" => {
+                                            let len = local_state.rpush(&commands);
+                                            println!("{}", len);
+                                            let response = format!(":{}\r\n", len);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
                                         _ => (),
                                     }
                                 }
