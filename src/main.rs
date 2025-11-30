@@ -22,6 +22,35 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         .extend(items);
         list_guard.get(&command[1]).unwrap().len().to_string()
     } 
+
+    fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
+        let list_guard = self.list.lock().unwrap();
+        let start = start.parse::<usize>().unwrap();
+        let stop = stop.parse::<usize>().unwrap();
+        let array = match list_guard.get(key){
+            Some(vec) => {
+                if start >= vec.len(){
+                    Vec::new()
+                } else if stop >= vec.len(){
+                    vec[start..].to_vec()
+                } else if start >= stop{
+                    Vec::new()
+                } else {
+                    vec[start..=stop].to_vec()
+                }
+            },
+            None => Vec::new()
+        };
+        encode_resp_array(&array)
+    } 
+}
+
+fn encode_resp_array(array: &Vec<String>) -> String{
+    let mut encoded_array = format!["*{}\r\n",array.len()];
+    for item in array {
+        encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item));
+    }
+    encoded_array
 }
 
 fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
@@ -109,8 +138,11 @@ fn main() {
                                         },
                                         "RPUSH" => {
                                             let len = local_state.rpush(&commands);
-                                            println!("{}", len);
                                             let response = format!(":{}\r\n", len);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "LRANGE" => {
+                                            let response = local_state.lrange(&commands[1], &commands[2], &commands[3]);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         _ => (),
