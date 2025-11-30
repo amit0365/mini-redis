@@ -196,7 +196,8 @@ fn main() {
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LPOP" => {
-                                            let response = format!(":{}\r\n", local_state.lpop(&commands));
+                                            let popped = local_state.lpop(&commands);
+                                            let response = format!(":{}\r\n{}\r\n", popped.len(), popped);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LRANGE" => {
