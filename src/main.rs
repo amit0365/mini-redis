@@ -48,11 +48,14 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         let mut list_guard = self.list.lock().unwrap();
         match list_guard.get_mut(&command[1]){
             Some(list) => {
-                match list.pop_front(){
-                    Some(element) => element,
-                    None => (-1).to_string(),
+                let mut popped_list = Vec::new();
+                while let Some(popped) = list.pop_front(){
+                    popped_list.push(popped)
                 }
+
+                encode_resp_array(&popped_list)
             },
+
             None => (-1).to_string()
         }
     } 
@@ -77,7 +80,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             None => VecDeque::new()
         };
 
-        encode_resp_array(&array)
+        encode_resp_array(&array.into())
     } 
 }
 
@@ -92,8 +95,11 @@ fn parse_wrapback(idx: i64, len: usize) -> usize{
     } else { idx.try_into().unwrap() }
 }
 
-fn encode_resp_array(array: &VecDeque<String>) -> String{
-    let mut encoded_array = format!["*{}\r\n",array.len()];
+fn encode_resp_array(array: &Vec<String>) -> String{
+    if array.is_empty(){
+        return format!("$-1\r\n")
+    }
+    let mut encoded_array = format!["*{}\r\n", array.len()];
     for item in array {
         encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item));
     }
@@ -145,11 +151,9 @@ fn main() {
                                         "SET" => {
                                             match commands.iter().skip(3).next(){
                                                 Some(str) => {
-                                                    println!("{}", str);
                                                     match str.to_uppercase().as_str(){
                                                         "PX" => {
                                                             let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
-                                                            println!("{:?}", timeout);
                                                             local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
                                                         },
                                                         "EX" => {
@@ -196,8 +200,7 @@ fn main() {
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LPOP" => {
-                                            let popped = local_state.lpop(&commands);
-                                            let response = format!("${}\r\n{}\r\n", popped.len(), popped);
+                                            let response = local_state.lpop(&commands);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LRANGE" => {
