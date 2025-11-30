@@ -58,6 +58,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
                                 None => (),
                             }
                         }
+                        println!("{:?}", popped_list);
 
                         encode_resp_array(&popped_list)
                     },
