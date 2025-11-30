@@ -38,7 +38,10 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
     fn llen(&self, command: &Vec<String>) -> String {
         let list_guard = self.list.lock().unwrap();
-        list_guard.get(&command[1]).unwrap().len().to_string()
+        match list_guard.get(&command[1]){
+            Some(list) => list.len().to_string(),
+            None => 0.to_string()
+        }
     } 
 
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
