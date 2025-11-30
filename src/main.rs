@@ -56,7 +56,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
                 encode_resp_array(&popped_list)
             },
 
-            None => (-1).to_string()
+            None => format!("$-1\r\n")
         }
     } 
 
