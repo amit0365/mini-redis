@@ -109,7 +109,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         }
     } 
 
-    async fn blpop(&mut self, command: &Vec<String>) -> String {
+    fn blpop(&mut self, command: &Vec<String>) -> String {
         let key = &command[1];
 
         {
@@ -275,6 +275,10 @@ fn main() {
                                         },
                                         "LPOP" => {
                                             let response = local_state.lpop(&commands);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "BLPOP" => {
+                                            let response = local_state.blpop(&commands);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LRANGE" => {
