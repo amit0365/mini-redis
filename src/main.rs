@@ -135,6 +135,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         };
 
         let timeout: f64 = command.last().unwrap().parse().unwrap();
+        println!("{}", timeout);
         if timeout == 0.0 {
             match receiver.recv(){
                 Ok((key, value)) => encode_resp_array(&vec![key, value]),
