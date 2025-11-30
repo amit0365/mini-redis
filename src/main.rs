@@ -49,8 +49,12 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         match list_guard.get_mut(&command[1]){
             Some(list) => {
                 let mut popped_list = Vec::new();
-                while let Some(popped) = list.pop_front(){
-                    popped_list.push(popped)
+                let len = command[2].parse::<usize>().unwrap(); // remove unwrap
+                for _ in 0..len{
+                    match list.pop_front(){
+                        Some(popped) => popped_list.push(popped),
+                        None => (),
+                    }
                 }
 
                 encode_resp_array(&popped_list)
