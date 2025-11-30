@@ -106,6 +106,8 @@ fn parse_wrapback(idx: i64, len: usize) -> usize{
 fn encode_resp_array(array: &Vec<String>) -> String{
     if array.is_empty(){
         return format!("$-1\r\n")
+    } else if array.len() == 1 {
+        return format!("${}\r\n", array[0])
     }
     let mut encoded_array = format!["*{}\r\n", array.len()];
     for item in array {
