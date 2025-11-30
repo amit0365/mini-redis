@@ -36,6 +36,11 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         list_guard.get(&command[1]).unwrap().len().to_string()
     } 
 
+    fn llen(&self, command: &Vec<String>) -> String {
+        let list_guard = self.list.lock().unwrap();
+        list_guard.get(&command[1]).unwrap().len().to_string()
+    } 
+
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
         let list_guard = self.list.lock().unwrap();
         let array = match list_guard.get(key){
@@ -170,6 +175,11 @@ fn main() {
                                         },
                                         "LPUSH" => {
                                             let len = local_state.lpush(&commands);
+                                            let response = format!(":{}\r\n", len);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "LLEN" => {
+                                            let len = local_state.llen(&commands);
                                             let response = format!(":{}\r\n", len);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
