@@ -116,7 +116,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             let mut list_guard = self.list_state.list.lock().unwrap();
             if let Some(list) = list_guard.get_mut(key){
                 if let Some(data) = list.pop_front(){
-                    return format!("${}\r\n{}\r\n", data.len(), data)
+                    return encode_resp_array(&vec![key.clone(), data])
                 }
             }
         }
