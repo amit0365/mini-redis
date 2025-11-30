@@ -144,7 +144,8 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         } else {
             match receiver.recv_timeout(Duration::from_secs_f64(timeout)){
                 Ok((key, value)) => encode_resp_array(&vec![key, value]),
-                Err(e) => format!("$\r\n"), // fix this
+                Err(mpsc::RecvTimeoutError::Timeout) => format!("*-1\r\n"),
+                Err(mpsc::RecvTimeoutError::Disconnected) => format!("*-1\r\n"),
             }
         }
 
