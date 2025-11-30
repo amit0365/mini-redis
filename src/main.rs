@@ -20,6 +20,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         list_guard.entry(command[1].clone())
         .or_insert(VecDeque::new())
         .extend(items);
+        println!("{:?}", list_guard);
         list_guard.get(&command[1]).unwrap().len().to_string()
     } 
 
