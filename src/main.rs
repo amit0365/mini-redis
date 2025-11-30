@@ -1,31 +1,65 @@
 #![allow(unused_imports)]
-use std::{collections::{HashMap, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use std::{collections::{HashMap, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant}};
+
+use tokio::sync::Notify;
 
 #[derive(Clone)]
 struct RedisState<K, E, V> {
     map: Arc<RwLock<HashMap<K, V>>>,
-    list: Arc<Mutex<HashMap<K, VecDeque<E>>>>,
+    list_state: ListState<K, E>,
+}
+
+#[derive(Clone)]
+struct ListState<K, E>{
+    list: Arc<Mutex<HashMap<K, VecDeque<E>>>>,    
+    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(String, String)>>>>>,    
+
+}
+
+impl ListState<String, String>{
+    fn new() -> Self{
+        let list = Arc::new(Mutex::new(HashMap::new()));
+        let waiters = Arc::new(Mutex::new(HashMap::new()));
+        ListState { list, waiters }
+    }
 }
 
 impl RedisState<String, String, (String, Option<Instant>)>{
     fn new() -> Self{
         let map = Arc::new(RwLock::new(HashMap::new()));
-        let list = Arc::new(Mutex::new(HashMap::new()));
-        RedisState { map, list }
+        let list_state = ListState::new();
+        RedisState { map, list_state }
     }
 
     fn rpush(&mut self, command: &Vec<String>) -> String {
-        let mut list_guard = self.list.lock().unwrap();
-        let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
-        list_guard.entry(command[1].clone())
-        .or_insert(VecDeque::new())
-        .extend(items);
+        let key = &command[1];
 
-        list_guard.get(&command[1]).unwrap().len().to_string() // remove unwrap
+        {
+            let mut list_guard = self.list_state.list.lock().unwrap();
+            let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
+            list_guard.entry(key.clone())
+            .or_insert(VecDeque::new())
+            .extend(items);
+        }
+        
+        let mut waiters_guard = self.list_state.waiters.lock().unwrap();
+        if let Some(waiting_queue) = waiters_guard.get_mut(key){
+            if let Some(sender) = waiting_queue.pop_front(){
+                let mut list_guard = self.list_state.list.lock().unwrap();
+                if let Some(deque) = list_guard.get_mut(key){
+                    if let Some(value) = deque.pop_front(){
+                        let _ = sender.send((key.clone(), value));
+                    }
+                }
+            }
+        }
+
+        let list_guard = self.list_state.list.lock().unwrap();
+        list_guard.get(key).unwrap().len().to_string()
     } 
 
     fn lpush(&mut self, command: &Vec<String>) -> String {
-        let mut list_guard = self.list.lock().unwrap();
+        let mut list_guard = self.list_state.list.lock().unwrap();
         let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
         for item in items.iter() {
             list_guard.entry(command[1].clone())
@@ -37,7 +71,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
     } 
 
     fn llen(&self, command: &Vec<String>) -> String {
-        let list_guard = self.list.lock().unwrap();
+        let list_guard = self.list_state.list.lock().unwrap();
         match list_guard.get(&command[1]){
             Some(list) => list.len().to_string(),
             None => 0.to_string()
@@ -45,7 +79,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
     } 
 
     fn lpop(&mut self, command: &Vec<String>) -> String {
-        let mut list_guard = self.list.lock().unwrap();
+        let mut list_guard = self.list_state.list.lock().unwrap();
         match list_guard.get_mut(&command[1]){
             Some(list) => {
                 match command.iter().skip(2).next(){
@@ -58,7 +92,6 @@ impl RedisState<String, String, (String, Option<Instant>)>{
                                 None => (),
                             }
                         }
-                        println!("{:?}", popped_list);
 
                         encode_resp_array(&popped_list)
                     },
@@ -76,8 +109,36 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         }
     } 
 
+    async fn blpop(&mut self, command: &Vec<String>) -> String {
+        let key = &command[1];
+
+        {
+            let mut list_guard = self.list_state.list.lock().unwrap();
+            if let Some(list) = list_guard.get_mut(key){
+                if let Some(data) = list.pop_front(){
+                    return format!("${}\r\n{}\r\n", data.len(), data)
+                }
+            }
+        }
+
+        let receiver = {
+            let mut waiters_guard = self.list_state.waiters.lock().unwrap();
+            let (sender, receiver) = mpsc::channel();
+            waiters_guard.entry(key.clone())
+                .or_insert(VecDeque::new())
+                .push_back(sender);
+
+            receiver
+        };
+
+        match receiver.recv(){
+            Ok((key, value)) => encode_resp_array(&vec![key, value]),
+            Err(e) => format!("$\r\n"), // fix this
+        }
+    }
+    
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
-        let list_guard = self.list.lock().unwrap();
+        let list_guard = self.list_state.list.lock().unwrap();
         let array = match list_guard.get(key){
             Some(vec) => {
                 let start = parse_wrapback(start.parse::<i64>().unwrap(), vec.len());
