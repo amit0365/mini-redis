@@ -20,8 +20,8 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         list_guard.entry(command[1].clone())
         .or_insert(VecDeque::new())
         .extend(items);
-        println!("{:?}", list_guard);
-        list_guard.get(&command[1]).unwrap().len().to_string()
+
+        list_guard.get(&command[1]).unwrap().len().to_string() // remove unwrap
     } 
 
     fn lpush(&mut self, command: &Vec<String>) -> String {
@@ -33,7 +33,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             .push_front(item.clone());
         }
 
-        list_guard.get(&command[1]).unwrap().len().to_string()
+        list_guard.get(&command[1]).unwrap().len().to_string() //remove unwrap
     } 
 
     fn llen(&self, command: &Vec<String>) -> String {
@@ -44,14 +44,25 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         }
     } 
 
+    fn lpop(&mut self, command: &Vec<String>) -> String {
+        let mut list_guard = self.list.lock().unwrap();
+        match list_guard.get_mut(&command[1]){
+            Some(list) => {
+                match list.pop_front(){
+                    Some(element) => element,
+                    None => (-1).to_string(),
+                }
+            },
+            None => (-1).to_string()
+        }
+    } 
+
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
         let list_guard = self.list.lock().unwrap();
         let array = match list_guard.get(key){
             Some(vec) => {
                 let start = parse_wrapback(start.parse::<i64>().unwrap(), vec.len());
                 let stop = parse_wrapback(stop.parse::<i64>().unwrap(), vec.len());
-                println!("{}", start);
-                println!("{}", stop);
 
                 if start >= vec.len(){
                     VecDeque::new()
@@ -65,6 +76,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             },
             None => VecDeque::new()
         };
+
         encode_resp_array(&array)
     } 
 }
@@ -172,18 +184,19 @@ fn main() {
                                             }
                                         },
                                         "RPUSH" => {
-                                            let len = local_state.rpush(&commands);
-                                            let response = format!(":{}\r\n", len);
+                                            let response = format!(":{}\r\n", local_state.rpush(&commands));
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LPUSH" => {
-                                            let len = local_state.lpush(&commands);
-                                            let response = format!(":{}\r\n", len);
+                                            let response = format!(":{}\r\n", local_state.lpush(&commands));
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LLEN" => {
-                                            let len = local_state.llen(&commands);
-                                            let response = format!(":{}\r\n", len);
+                                            let response = format!(":{}\r\n", local_state.llen(&commands));
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "LPOP" => {
+                                            let response = format!(":{}\r\n", local_state.lpop(&commands));
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "LRANGE" => {
