@@ -16,9 +16,10 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
     fn rpush(&mut self, command: &Vec<String>) -> String {
         let mut list_guard = self.list.lock().unwrap();
+        let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
         list_guard.entry(command[1].clone())
         .or_insert(Vec::new())
-        .push(command[2].clone());
+        .extend(items);
         list_guard.get(&command[1]).unwrap().len().to_string()
     } 
 }
