@@ -12,11 +12,11 @@ struct RedisState<K, E, V> {
 #[derive(Clone)]
 struct ListState<K, E>{
     list: Arc<Mutex<HashMap<K, VecDeque<E>>>>,    
-    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(String, String)>>>>>,    
+    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, E)>>>>>,    
 
 }
 
-impl ListState<String, String>{
+impl<K, V> ListState<K, V>{
     fn new() -> Self{
         let list = Arc::new(Mutex::new(HashMap::new()));
         let waiters = Arc::new(Mutex::new(HashMap::new()));
@@ -56,8 +56,6 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             }
         }
 
-        // let list_guard = self.list_state.list.lock().unwrap();
-        // list_guard.get(key).unwrap().len().to_string()
         count
     } 
 
@@ -135,7 +133,6 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         };
 
         let timeout: f64 = command.last().unwrap().parse().unwrap();
-        println!("{}", timeout);
         if timeout == 0.0 {
             match receiver.recv(){
                 Ok((key, value)) => encode_resp_array(&vec![key, value]),
@@ -148,7 +145,6 @@ impl RedisState<String, String, (String, Option<Instant>)>{
                 Err(mpsc::RecvTimeoutError::Disconnected) => format!("*-1\r\n"),
             }
         }
-
     }
     
     fn lrange(&self, key: &String, start: &String, stop: &String) -> String {
@@ -173,6 +169,18 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
         encode_resp_array(&array.into())
     } 
+
+    fn type_command(&self, command: &Vec<String>) -> String {
+        let map_guard = self.map.read().unwrap();
+        match map_guard.get(&command[1]){
+            Some((val, _)) => type_of(val),
+            None => "none".to_string()
+        }
+    } 
+}
+
+fn type_of<T>(_: &T) -> String{
+    std::any::type_name::<T>().to_string()
 }
 
 fn parse_wrapback(idx: i64, len: usize) -> usize{
@@ -297,6 +305,10 @@ fn main() {
                                         },
                                         "LRANGE" => {
                                             let response = local_state.lrange(&commands[1], &commands[2], &commands[3]);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                       "TYPE" => {
+                                            let response = format!("+{}\r\n", local_state.type_command(&commands));
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         _ => (),
