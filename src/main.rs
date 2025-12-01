@@ -58,7 +58,7 @@ impl RedisValue{
                                         let id = time.to_string() + "-" + &sequence.to_string();
                                         if let Some(entry) = stream.map.get(&id){
                                             let flattened = entry.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                                            entries.push(json!([id, json!(flattened)]));
+                                            entries.push(json!([id, flattened]));
                                         }
                                     } 
                                 }
@@ -73,6 +73,7 @@ impl RedisValue{
                     },
                 }
 
+                println!("{:?}", entries);
                 let mut encoded_array = format!["*{}\r\n", entries.len()];
                 encode_resp_value_array(&mut encoded_array, &entries)
             }
