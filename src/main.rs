@@ -46,11 +46,13 @@ impl RedisValue{
             RedisValue::String(_) => format!("not supported"),
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
+                let mut new_id = id.clone();
                 let (id_pre, id_post) = id.split_once("-").unwrap();
                 let id_millisecs = id_pre.parse::<u64>().unwrap(); 
                 let id_sequence_num: u64;
                 if id_post == "*"{
                     id_sequence_num = stream.time_map.get(&id_millisecs).unwrap_or(&0) + 1; //fix this
+                    new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
                 } else {
                     id_sequence_num = id_post.parse::<u64>().unwrap(); 
                 }
@@ -58,12 +60,12 @@ impl RedisValue{
                 if id_sequence_num == 0 { //empty stream
                     return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
                 }
-                
+
                 let last_id = &stream.last_id;
                 if last_id.is_empty(){ //new entry
-                    stream.insert(id, pairs_flattened);
-                    stream.last_id = id.clone();
-                    return format!("${}\r\n{}\r\n", id.len(), id)
+                    stream.insert(&new_id, pairs_flattened);
+                    stream.last_id = new_id.clone();
+                    return format!("${}\r\n{}\r\n", new_id.len(), new_id)
                 }
             
                 let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
@@ -82,9 +84,9 @@ impl RedisValue{
                     stream.time_map.insert(id_millisecs, id_sequence_num);
                 }
 
-                stream.insert(id, pairs_flattened);
-                stream.last_id = id.clone();
-                format!("${}\r\n{}\r\n", id.len(), id)
+                stream.insert(&new_id, pairs_flattened);
+                stream.last_id = new_id.clone();
+                format!("${}\r\n{}\r\n", new_id.len(), new_id)
             }
         }
     }
