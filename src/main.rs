@@ -56,7 +56,9 @@ impl RedisValue{
                                 println!("{:?}", time_range);
                                 println!("{:?}", sequence_range);
                                 for time in time_range{
+                                    println!("{}", time);
                                     for sequence in sequence_range.clone(){
+                                        println!("{}", sequence);
                                         let id = time.to_string() + "-" + &sequence.to_string();
                                         if let Some(entry) = stream.map.get(&id){
                                             let flattened = entry.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
