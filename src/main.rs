@@ -54,7 +54,7 @@ impl RedisValue{
                     if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
                         id_sequence_num = last_sequence_num + 1;
                     } else { if id_millisecs == 0 {id_sequence_num = 1 } else {
-                        id_sequence_num = 0;
+                        id_sequence_num = 0;}
                     }
                     new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
                 } else {
