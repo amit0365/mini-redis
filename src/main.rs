@@ -64,16 +64,15 @@ impl RedisValue{
                                 }
                             },
                             None => {
-                                println!("none")
+                                //handle error
                             },
                         }
                     },
                     None => {
-                        println!("none")
+                        //handle error
                     },
                 }
 
-                println!("{:?}", entries);
                 let mut encoded_array = String::new();
                 encode_resp_value_array(&mut encoded_array, &entries)
             }
@@ -119,17 +118,6 @@ impl RedisValue{
                             _ => id_sequence_num = id_post.parse::<u64>().unwrap(),
                         }
 
-                        // if id_post == "*"{
-                        //     if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
-                        //         id_sequence_num = last_sequence_num + 1;
-                        //     } else { 
-                        //         if id_millisecs == 0 { id_sequence_num = 1 }
-                        //     }
-                        //     new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
-                        // } else {
-                        //     id_sequence_num = id_post.parse::<u64>().unwrap(); 
-                        // }
-                    
                         if id_millisecs == 0 && id_sequence_num == 0 { //empty stream
                             return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
                         }
