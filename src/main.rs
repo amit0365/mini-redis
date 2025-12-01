@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, str, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use tokio::sync::Notify;
 
@@ -37,7 +37,44 @@ impl RedisValue{
         match self{
             RedisValue::String(s) => Some(s),
             RedisValue::StringWithTimeout((s, _)) => Some(s),
-            _ => None
+            RedisValue::Stream(_) => None
+        }
+    }
+
+    fn get_stream_range(&self, start_id: &String, stop_id: &String) -> String{
+        match self{
+            RedisValue::String(_) => format!("not supported"),
+            RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
+            RedisValue::Stream(stream) => {
+                let mut entries = Vec::new();
+                match start_id.split_once("-"){
+                    Some((start_id_pre, start_id_post)) => {
+                        match stop_id.split_once("-"){
+                            Some((stop_id_pre, stop_id_post)) => {
+                                let time_range = start_id_pre.parse::<u128>().unwrap()..stop_id_pre.parse::<u128>().unwrap();
+                                let sequence_range = start_id_post.parse::<u64>().unwrap()..stop_id_post.parse::<u64>().unwrap();
+                                for time in time_range{
+                                    for sequence in sequence_range.clone(){
+                                        let id = time.to_string() + "-" + &sequence.to_string();
+                                        if let Some(entry) = stream.map.get(&id){
+                                            let flattened = entry.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+                                            entries.push(encode_resp_array(&vec![id, encode_resp_array(&flattened)]));
+                                        }
+                                    } 
+                                }
+                            },
+                            None => {
+
+                            },
+                        }
+                    },
+                    None => {
+
+                    },
+                }
+
+                encode_resp_array(&entries)
+            }
         }
     }
 
@@ -68,16 +105,28 @@ impl RedisValue{
                         let id_millisecs = id_pre.parse::<u128>().unwrap(); 
         
                         let mut id_sequence_num: u64 = 0;
-                        if id_post == "*"{
-                            if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
-                                id_sequence_num = last_sequence_num + 1;
-                            } else { 
-                                if id_millisecs == 0 { id_sequence_num = 1 }
-                            }
-                            new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
-                        } else {
-                            id_sequence_num = id_post.parse::<u64>().unwrap(); 
+                        match id_post{
+                            "*" => {
+                                if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
+                                    id_sequence_num = last_sequence_num + 1;
+                                } else { 
+                                    if id_millisecs == 0 { id_sequence_num = 1 }
+                                }
+                                new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string();
+                            },
+                            _ => id_sequence_num = id_post.parse::<u64>().unwrap(),
                         }
+
+                        // if id_post == "*"{
+                        //     if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
+                        //         id_sequence_num = last_sequence_num + 1;
+                        //     } else { 
+                        //         if id_millisecs == 0 { id_sequence_num = 1 }
+                        //     }
+                        //     new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
+                        // } else {
+                        //     id_sequence_num = id_post.parse::<u64>().unwrap(); 
+                        // }
                     
                         if id_millisecs == 0 && id_sequence_num == 0 { //empty stream
                             return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
@@ -118,8 +167,6 @@ impl RedisValue{
         }
     }
 }
-
-//fn generate_id
 
 fn collect_as_strings<I>(iter: I) -> Vec<String>
     where 
@@ -331,11 +378,17 @@ impl RedisState<String, RedisValue>{
 
     fn xadd(&self, command: &Vec<String>) -> String {
         let mut map_guard = self.map.write().unwrap();
-        let id = command[2].clone();
         let pairs_flattened = command.iter().skip(3).cloned().collect::<Vec<String>>();
         map_guard.entry(command[1].clone())
         .or_insert(RedisValue::Stream(StreamValue::new()))
-        .update_stream(&id, pairs_flattened)
+        .update_stream(&command[2], pairs_flattened)
+    } 
+
+    fn xrange(&self, command: &Vec<String>) -> String {
+        self.map.read().unwrap()
+        .get(&command[1])
+        .unwrap() // no case for nil
+        .get_stream_range(&command[2], &command[3])
     } 
 }
 
@@ -471,6 +524,10 @@ fn main() {
                                         },
                                         "XADD" => {
                                             let response = local_state.xadd(&commands);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "XRANGE" => {
+                                            let response = local_state.xrange(&commands);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         _ => (),
