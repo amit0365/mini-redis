@@ -173,7 +173,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
     fn type_command(&self, command: &Vec<String>) -> String {
         let map_guard = self.map.read().unwrap();
         match map_guard.get(&command[1]){
-            Some((val, _)) => type_of(val),
+            Some((val, _)) => "string".to_string(),
             None => "none".to_string()
         }
     } 
