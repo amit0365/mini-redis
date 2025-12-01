@@ -6,31 +6,54 @@ use tokio::sync::Notify;
 #[derive(Clone)]
 enum RedisValue{
     String(String),
-    StringWithTimeout((String, Instant)), //remove option use only when timeout supplied othewise use string enum
-    List(VecDeque<String>),
+    StringWithTimeout((String, Instant)), 
     Stream(StreamValue<String, String>)
 }
 
 #[derive(Clone)]
 struct StreamValue<K, V>{
-    id: String,
-    pairs: Vec<(K, V)>
+    last_id: K,
+    map: HashMap<K, Vec<(K, V)>>
 }
 
 impl StreamValue<String, String>{
-    fn new(id: String, pairs_flattened: Vec<String>) -> Self {
-        println!("{}", pairs_flattened.len());
-        let pairs_grouped = pairs_flattened.chunks_exact(2).map(|pair| (pair[0].clone(), pair[1].clone())).collect::<Vec<(String, String)>>();
-        StreamValue { id, pairs: pairs_grouped }
+    fn new() -> Self {
+        StreamValue { last_id: String::new(), map: HashMap::new() }
+    }
+
+    fn insert(&mut self, id: &String, pairs_flattened: Vec<String>) -> Option<Vec<(String, String)>> {
+        let pairs_grouped = pairs_flattened
+        .chunks_exact(2)
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect::<Vec<(String, String)>>();
+        
+        self.map.insert(id.clone(), pairs_grouped)
     }
 }
 
 impl RedisValue{
-    fn as_string(&self) -> Option<&String>{
+    fn as_string(&self) -> Option<&String> {
         match self{
             RedisValue::String(s) => Some(s),
             RedisValue::StringWithTimeout((s, _)) => Some(s),
             _ => None
+        }
+    }
+
+    fn update_stream(&mut self, id: &String, pairs_flattened: Vec<String>) -> String{
+        match self{
+            RedisValue::String(_) => format!("not supported"),
+            RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
+            RedisValue::Stream(stream) => {
+                let (validated, error) = validate_id(id, &stream.last_id);
+                if !validated {
+                    return error.unwrap();
+                }
+
+                stream.insert(id, pairs_flattened);
+                stream.last_id = id.clone();
+                format!("${}\r\n{}\r\n", id.len(), id)
+            },
         }
     }
 }
@@ -183,7 +206,7 @@ impl RedisState<String, RedisValue>{
             receiver
         };
 
-        let timeout: f64 = command.last().unwrap().parse().unwrap();
+        let timeout: f64 = command.last().unwrap().parse().unwrap(); // yo check this
         if timeout == 0.0 {
             match receiver.recv(){
                 Ok((key, value)) => {
@@ -237,7 +260,6 @@ impl RedisState<String, RedisValue>{
                     RedisValue::String(_) => "string".to_string(),
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
-                    _ => "none".to_string() // CHECK THIS
                 }
             },
             None => "none".to_string()
@@ -248,14 +270,37 @@ impl RedisState<String, RedisValue>{
         let mut map_guard = self.map.write().unwrap();
         let id = command[2].clone();
         let pairs_flattened = command.iter().skip(3).cloned().collect::<Vec<String>>();
-        let stream_state = RedisValue::Stream(StreamValue::new(id.clone(), pairs_flattened));
-        map_guard.insert(command[1].clone(), stream_state);
-        id
+        map_guard.entry(command[1].clone())
+        .or_insert(RedisValue::Stream(StreamValue::new()))
+        .update_stream(&id, pairs_flattened)
     } 
 }
 
-fn type_of<T>(_: &T) -> String{
-    std::any::type_name::<T>().to_string()
+fn validate_id(id: &String, last_id: &String) -> (bool, Option<String>) {
+    let (id_pre, id_post) = id.split_once("-").unwrap();
+    let id_millisecs = id_pre.parse::<u64>().unwrap(); 
+    let id_sequence_num = id_post.parse::<u64>().unwrap(); 
+    if id_sequence_num == 0 { //empty stream
+        return (false, Some(format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")))
+    }
+
+    if last_id.is_empty(){ //new entry
+        return (true, None)
+    }
+
+    let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
+    let last_id_millisecs = last_id_pre.parse::<u64>().unwrap(); 
+    let last_id_sequence_num = last_id_post.parse::<u64>().unwrap(); 
+
+    if last_id_millisecs > id_millisecs{
+        return (false, Some(format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")))
+    } else if last_id_millisecs == id_millisecs {
+        if last_id_sequence_num >= id_sequence_num {
+            return (false, Some(format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")))
+        }
+    }
+
+    (true, None)
 }
 
 fn parse_wrapback(idx: i64, len: usize) -> usize{
@@ -389,8 +434,7 @@ fn main() {
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         "XADD" => {
-                                            let val = local_state.xadd(&commands);
-                                            let response = format!("${}\r\n{}\r\n", val.len(), val);
+                                            let response = local_state.xadd(&commands);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         _ => (),
