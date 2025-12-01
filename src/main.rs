@@ -59,9 +59,9 @@ impl RedisValue{
                     id_sequence_num = id_post.parse::<u64>().unwrap(); 
                 }
             
-                if id_sequence_num == 0 { //empty stream
-                    return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
-                }
+                // if id_sequence_num == 0 { //empty stream
+                //     return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                // }
 
                 let last_id = &stream.last_id;
                 if last_id.is_empty(){ //new entry
