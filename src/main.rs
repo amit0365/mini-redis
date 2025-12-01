@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, str, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
-
+use serde_json::{json, Value};
 use tokio::sync::Notify;
 
 #[derive(Clone)]
@@ -58,7 +58,7 @@ impl RedisValue{
                                         let id = time.to_string() + "-" + &sequence.to_string();
                                         if let Some(entry) = stream.map.get(&id){
                                             let flattened = entry.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                                            entries.push(encode_resp_array(&vec![id, encode_resp_array(&flattened)]));
+                                            entries.push(json!([id, flattened]));
                                         }
                                     } 
                                 }
@@ -73,7 +73,7 @@ impl RedisValue{
                     },
                 }
 
-                encode_resp_array(&entries)
+                encode_resp_value_array(&entries)
             }
         }
     }
@@ -408,6 +408,21 @@ fn encode_resp_array(array: &Vec<String>) -> String{
     for item in array {
         encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
     }
+    encoded_array
+}
+
+fn encode_resp_value_array(array: &Vec<Value>) -> String{
+    let mut encoded_array = format!["*{}\r\n", array.len()];
+    for item in array {
+        match item{
+            Value::Array(val) => {
+                encode_resp_value_array(val);
+            },
+            Value::String(s) => encoded_array.push_str(&format!("${}\r\n{}\r\n", s.len(), s)),
+            _ => (), //not supported
+        }
+    }
+
     encoded_array
 }
 
