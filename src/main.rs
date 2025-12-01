@@ -6,7 +6,7 @@ use tokio::sync::Notify;
 #[derive(Clone)]
 enum RedisValue{
     String(String),
-    StringWithTimeout((String, Option<Instant>)),
+    StringWithTimeout((String, Instant)), //remove option use only when timeout supplied othewise use string enum
     List(VecDeque<String>),
     Stream(StreamValue<String, String>)
 }
@@ -325,17 +325,17 @@ fn main() {
                                                     match str.to_uppercase().as_str(){
                                                         "PX" => {
                                                             let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
-                                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), Some(timeout))));
+                                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
                                                         },
                                                         "EX" => {
                                                             let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
-                                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), Some(timeout))));
+                                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
                                                         },
                                                         _ => (),
                                                     }
                                                 }
                                                 None => {
-                                                    local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), None)));
+                                                    local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::String(commands[2].clone()));
                                                 }
                                             }
                                             
@@ -345,16 +345,12 @@ fn main() {
                                             if let Some(value) = local_state.map.read().unwrap().get(&commands[1]){
                                                 match value{
                                                     RedisValue::StringWithTimeout((value, timeout)) => {
-                                                        if let Some(t) = timeout{
-                                                            if Instant::now() < *t {
-                                                                let response = format!("${}\r\n{}\r\n", value.len(), value);
-                                                                stream.write_all(response.as_bytes()).unwrap()
-                                                            } else {
-                                                                stream.write_all(b"$-1\r\n").unwrap()
-                                                            } 
+                                                        if Instant::now() < *timeout {
+                                                            let response = format!("${}\r\n{}\r\n", value.len(), value);
+                                                            stream.write_all(response.as_bytes()).unwrap()
                                                         } else {
-                                                            stream.write_all(b"$-1\r\n").unwrap() // not satisfied no timeout gives error. should we enforce type? or just same logic as string or remove string?
-                                                        }
+                                                            stream.write_all(b"$-1\r\n").unwrap()
+                                                        } 
                                                     },
                                                     RedisValue::String(val) => {
                                                         let response = format!("${}\r\n{}\r\n", val.len(), val);
