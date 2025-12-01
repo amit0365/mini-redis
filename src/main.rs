@@ -74,7 +74,7 @@ impl RedisValue{
                 }
 
                 println!("{:?}", entries);
-                let mut encoded_array = format!["*{}\r\n", entries.len()];
+                let mut encoded_array = String::new();
                 encode_resp_value_array(&mut encoded_array, &entries)
             }
         }
@@ -414,6 +414,7 @@ fn encode_resp_array(array: &Vec<String>) -> String{
 }
 
 fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) -> String{
+    encoded_array.push_str(&format!["*{}\r\n", array.len()]);
     for item in array {
         match item{
             Value::Array(val) => {
