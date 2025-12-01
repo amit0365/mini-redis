@@ -47,9 +47,11 @@ impl RedisValue{
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
                 let last_id = &stream.last_id;
-                // if last_id.is_empty(){ //new entry
-                //     return None
-                // }
+                if last_id.is_empty(){ //new entry
+                    stream.insert(id, pairs_flattened);
+                    stream.last_id = id.clone();
+                    return format!("${}\r\n{}\r\n", id.len(), id)
+                }
             
                 let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
                 let last_id_millisecs = last_id_pre.parse::<u64>().unwrap(); 
