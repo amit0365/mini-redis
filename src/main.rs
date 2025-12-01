@@ -64,12 +64,12 @@ impl RedisValue{
                                 }
                             },
                             None => {
-
+                                println!("none")
                             },
                         }
                     },
                     None => {
-
+                        println!("none")
                     },
                 }
 
