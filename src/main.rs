@@ -51,7 +51,9 @@ impl RedisValue{
                 let id_millisecs = id_pre.parse::<u64>().unwrap(); 
                 let id_sequence_num: u64;
                 if id_post == "*"{
-                    id_sequence_num = stream.time_map.get(&id_millisecs).unwrap_or(&0) + 1; //fix this
+                    if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
+                        id_sequence_num = last_sequence_num + 1;
+                    } else { id_sequence_num = 0 }
                     new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
                 } else {
                     id_sequence_num = id_post.parse::<u64>().unwrap(); 
