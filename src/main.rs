@@ -13,12 +13,13 @@ enum RedisValue{
 #[derive(Clone)]
 struct StreamValue<K, V>{
     last_id: K,
+    time_map: HashMap<u64, u64>, //time -> last seqquence number
     map: HashMap<K, Vec<(K, V)>>
 }
 
 impl StreamValue<String, String>{
     fn new() -> Self {
-        StreamValue { last_id: String::new(), map: HashMap::new() }
+        StreamValue { last_id: String::new(), time_map: HashMap::new(), map: HashMap::new() }
     }
 
     fn insert(&mut self, id: &String, pairs_flattened: Vec<String>) -> Option<Vec<(String, String)>> {
@@ -45,18 +46,50 @@ impl RedisValue{
             RedisValue::String(_) => format!("not supported"),
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
-                let (validated, error) = validate_id(id, &stream.last_id);
-                if !validated {
-                    return error.unwrap();
+                let last_id = &stream.last_id;
+                // if last_id.is_empty(){ //new entry
+                //     return None
+                // }
+            
+                let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
+                let last_id_millisecs = last_id_pre.parse::<u64>().unwrap(); 
+                let last_id_sequence_num = last_id_post.parse::<u64>().unwrap(); 
+            
+                let (id_pre, id_post) = id.split_once("-").unwrap();
+                let id_millisecs = id_pre.parse::<u64>().unwrap(); 
+                let id_sequence_num: u64;
+                if id_post == "*"{
+                    id_sequence_num = stream.time_map.get(&id_millisecs).unwrap() + 1; //fix this
+                } else {
+                    id_sequence_num = id_post.parse::<u64>().unwrap(); 
+                }
+            
+
+                if id_sequence_num == 0 { //empty stream
+                    return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                }
+            
+                if last_id_millisecs > id_millisecs{
+                    return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+                } else if last_id_millisecs == id_millisecs {
+                    if last_id_sequence_num >= id_sequence_num {
+                        return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+                    }
+                }
+                
+                if id_sequence_num > *stream.time_map.get(&id_millisecs).unwrap() { // update top sequence num for a give time
+                    stream.time_map.insert(id_millisecs, id_sequence_num);
                 }
 
                 stream.insert(id, pairs_flattened);
                 stream.last_id = id.clone();
                 format!("${}\r\n{}\r\n", id.len(), id)
-            },
+            }
         }
     }
 }
+
+//fn generate_id
 
 fn collect_as_strings<I>(iter: I) -> Vec<String>
     where 
@@ -274,33 +307,6 @@ impl RedisState<String, RedisValue>{
         .or_insert(RedisValue::Stream(StreamValue::new()))
         .update_stream(&id, pairs_flattened)
     } 
-}
-
-fn validate_id(id: &String, last_id: &String) -> (bool, Option<String>) {
-    let (id_pre, id_post) = id.split_once("-").unwrap();
-    let id_millisecs = id_pre.parse::<u64>().unwrap(); 
-    let id_sequence_num = id_post.parse::<u64>().unwrap(); 
-    if id_sequence_num == 0 { //empty stream
-        return (false, Some(format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")))
-    }
-
-    if last_id.is_empty(){ //new entry
-        return (true, None)
-    }
-
-    let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
-    let last_id_millisecs = last_id_pre.parse::<u64>().unwrap(); 
-    let last_id_sequence_num = last_id_post.parse::<u64>().unwrap(); 
-
-    if last_id_millisecs > id_millisecs{
-        return (false, Some(format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")))
-    } else if last_id_millisecs == id_millisecs {
-        if last_id_sequence_num >= id_sequence_num {
-            return (false, Some(format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")))
-        }
-    }
-
-    (true, None)
 }
 
 fn parse_wrapback(idx: i64, len: usize) -> usize{
