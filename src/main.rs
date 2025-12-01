@@ -46,6 +46,19 @@ impl RedisValue{
             RedisValue::String(_) => format!("not supported"),
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
+                let (id_pre, id_post) = id.split_once("-").unwrap();
+                let id_millisecs = id_pre.parse::<u64>().unwrap(); 
+                let id_sequence_num: u64;
+                if id_post == "*"{
+                    id_sequence_num = stream.time_map.get(&id_millisecs).unwrap_or(&0) + 1; //fix this
+                } else {
+                    id_sequence_num = id_post.parse::<u64>().unwrap(); 
+                }
+            
+                if id_sequence_num == 0 { //empty stream
+                    return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                }
+                
                 let last_id = &stream.last_id;
                 if last_id.is_empty(){ //new entry
                     stream.insert(id, pairs_flattened);
@@ -55,21 +68,7 @@ impl RedisValue{
             
                 let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
                 let last_id_millisecs = last_id_pre.parse::<u64>().unwrap(); 
-                let last_id_sequence_num = last_id_post.parse::<u64>().unwrap(); 
-            
-                let (id_pre, id_post) = id.split_once("-").unwrap();
-                let id_millisecs = id_pre.parse::<u64>().unwrap(); 
-                let id_sequence_num: u64;
-                if id_post == "*"{
-                    id_sequence_num = stream.time_map.get(&id_millisecs).unwrap() + 1; //fix this
-                } else {
-                    id_sequence_num = id_post.parse::<u64>().unwrap(); 
-                }
-            
-
-                if id_sequence_num == 0 { //empty stream
-                    return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
-                }
+                let last_id_sequence_num = last_id_post.parse::<u64>().unwrap();
             
                 if last_id_millisecs > id_millisecs{
                     return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
