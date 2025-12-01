@@ -73,7 +73,8 @@ impl RedisValue{
                     },
                 }
 
-                encode_resp_value_array(&entries)
+                let mut encoded_array = format!["*{}\r\n", entries.len()];
+                encode_resp_value_array(&mut encoded_array, &entries)
             }
         }
     }
@@ -411,19 +412,18 @@ fn encode_resp_array(array: &Vec<String>) -> String{
     encoded_array
 }
 
-fn encode_resp_value_array(array: &Vec<Value>) -> String{
-    let mut encoded_array = format!["*{}\r\n", array.len()];
+fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) -> String{
     for item in array {
         match item{
             Value::Array(val) => {
-                encode_resp_value_array(val);
+                encode_resp_value_array(encoded_array, val);
             },
             Value::String(s) => encoded_array.push_str(&format!("${}\r\n{}\r\n", s.len(), s)),
             _ => (), //not supported
         }
     }
 
-    encoded_array
+    encoded_array.clone()
 }
 
 fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
