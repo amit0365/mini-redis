@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant}};
+use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use tokio::sync::Notify;
 
@@ -13,7 +13,7 @@ enum RedisValue{
 #[derive(Clone)]
 struct StreamValue<K, V>{
     last_id: K,
-    time_map: HashMap<u64, u64>, //time -> last seqquence number
+    time_map: HashMap<u128, u64>, //time -> last seqquence number
     map: HashMap<K, Vec<(K, V)>>
 }
 
@@ -47,51 +47,72 @@ impl RedisValue{
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
                 let mut new_id = id.clone();
-                let (id_pre, id_post) = id.split_once("-").unwrap();
-                let id_millisecs = id_pre.parse::<u64>().unwrap(); 
-                let mut id_sequence_num: u64 = 0;
-                if id_post == "*"{
-                    if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
-                        id_sequence_num = last_sequence_num + 1;
-                    } else { 
-                        if id_millisecs == 0 {id_sequence_num = 1 }
-                    }
-                    new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
-                } else {
-                    id_sequence_num = id_post.parse::<u64>().unwrap(); 
-                }
-            
-                if id_millisecs == 0 && id_sequence_num == 0{ //empty stream
-                    return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
-                }
+                match id.as_str(){
+                    "*" => {
+                        let millis = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis();
 
-                let last_id = &stream.last_id;
-                if last_id.is_empty(){ //new entry
-                    stream.insert(&new_id, pairs_flattened);
-                    stream.last_id = new_id.clone();
-                    return format!("${}\r\n{}\r\n", new_id.len(), new_id)
-                }
-            
-                let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
-                let last_id_millisecs = last_id_pre.parse::<u64>().unwrap(); 
-                let last_id_sequence_num = last_id_post.parse::<u64>().unwrap();
-            
-                if last_id_millisecs > id_millisecs{
-                    return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-                } else if last_id_millisecs == id_millisecs {
-                    if last_id_sequence_num >= id_sequence_num {
-                        return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-                    }
-                }
-                
-                if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs) { // update top sequence num for a give time
-                    if id_sequence_num > *last_sequence_num { stream.time_map.insert(id_millisecs, id_sequence_num);}
-                } else {
-                    stream.time_map.insert(id_millisecs, id_sequence_num);
+                        let id_sequence_num;
+                        if let Some(last_sequence_num) = stream.time_map.get(&millis){
+                            id_sequence_num = last_sequence_num + 1;
+                        } else { 
+                            id_sequence_num = 0
+                        }
+
+                        new_id = millis.to_string() + "-" + &id_sequence_num.to_string();
+                    },
+                    _ => {
+                        let (id_pre, id_post) = id.split_once("-").unwrap();
+                        let id_millisecs = id_pre.parse::<u128>().unwrap(); 
+        
+                        let mut id_sequence_num: u64 = 0;
+                        if id_post == "*"{
+                            if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
+                                id_sequence_num = last_sequence_num + 1;
+                            } else { 
+                                if id_millisecs == 0 { id_sequence_num = 1 }
+                            }
+                            new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
+                        } else {
+                            id_sequence_num = id_post.parse::<u64>().unwrap(); 
+                        }
+                    
+                        if id_millisecs == 0 && id_sequence_num == 0 { //empty stream
+                            return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                        }
+        
+                        let last_id = &stream.last_id;
+                        if last_id.is_empty(){ //new entry
+                            stream.insert(&new_id, pairs_flattened);
+                            stream.last_id = new_id.clone();
+                            return format!("${}\r\n{}\r\n", new_id.len(), new_id)
+                        }
+                    
+                        let (last_id_pre, last_id_post) = last_id.split_once("-").unwrap();
+                        let last_id_millisecs = last_id_pre.parse::<u128>().unwrap(); 
+                        let last_id_sequence_num = last_id_post.parse::<u64>().unwrap();
+                    
+                        if last_id_millisecs > id_millisecs{
+                            return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+                        } else if last_id_millisecs == id_millisecs {
+                            if last_id_sequence_num >= id_sequence_num {
+                                return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+                            }
+                        }
+
+                        if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs) { // update top sequence num for a give time
+                            if id_sequence_num > *last_sequence_num { stream.time_map.insert(id_millisecs, id_sequence_num);}
+                        } else {
+                            stream.time_map.insert(id_millisecs, id_sequence_num);
+                        }
+
+                        stream.last_id = new_id.clone(); //update id
+                    },
                 }
 
                 stream.insert(&new_id, pairs_flattened);
-                stream.last_id = new_id.clone();
                 format!("${}\r\n{}\r\n", new_id.len(), new_id)
             }
         }
