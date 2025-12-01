@@ -80,7 +80,9 @@ impl RedisValue{
                     }
                 }
                 
-                if id_sequence_num > *stream.time_map.get(&id_millisecs).unwrap() { // update top sequence num for a give time
+                if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs) { // update top sequence num for a give time
+                    if id_sequence_num > *last_sequence_num { stream.time_map.insert(id_millisecs, id_sequence_num);}
+                } else {
                     stream.time_map.insert(id_millisecs, id_sequence_num);
                 }
 
