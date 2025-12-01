@@ -49,12 +49,12 @@ impl RedisValue{
                 let mut entries = Vec::new();
                 match start_id.split_once("-"){
                     Some((start_id_pre, start_id_post)) => {
-                        println!("start");
                         match stop_id.split_once("-"){
                             Some((stop_id_pre, stop_id_post)) => {
-                                println!("stop");
                                 let time_range = start_id_pre.parse::<u128>().unwrap()..stop_id_pre.parse::<u128>().unwrap();
                                 let sequence_range = start_id_post.parse::<u64>().unwrap()..stop_id_post.parse::<u64>().unwrap();
+                                println!("{:?}", time_range);
+                                println!("{:?}", sequence_range);
                                 for time in time_range{
                                     for sequence in sequence_range.clone(){
                                         let id = time.to_string() + "-" + &sequence.to_string();
