@@ -19,6 +19,7 @@ struct StreamValue<K, V>{
 
 impl StreamValue<String, String>{
     fn new(id: String, pairs_flattened: Vec<String>) -> Self {
+        println!("{}", pairs_flattened.len());
         let pairs_grouped = pairs_flattened.chunks_exact(2).map(|pair| (pair[0].clone(), pair[1].clone())).collect::<Vec<(String, String)>>();
         StreamValue { id, pairs: pairs_grouped }
     }
