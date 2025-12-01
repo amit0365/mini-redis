@@ -246,7 +246,7 @@ impl RedisState<String, RedisValue>{
     fn xadd(&self, command: &Vec<String>) -> String {
         let mut map_guard = self.map.write().unwrap();
         let id = command[2].clone();
-        let pairs_flattened = command.iter().skip(2).cloned().collect::<Vec<String>>();
+        let pairs_flattened = command.iter().skip(3).cloned().collect::<Vec<String>>();
         let stream_state = RedisValue::Stream(StreamValue::new(id.clone(), pairs_flattened));
         map_guard.insert(command[1].clone(), stream_state);
         id
