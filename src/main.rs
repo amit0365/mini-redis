@@ -235,6 +235,7 @@ impl RedisState<String, RedisValue>{
             Some(val) => {
                 match val{
                     RedisValue::String(_) => "string".to_string(),
+                    RedisValue::StringWithTimeout(_) => "string".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
                     _ => "none".to_string() // CHECK THIS
                 }
