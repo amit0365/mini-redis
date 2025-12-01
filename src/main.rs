@@ -51,14 +51,10 @@ impl RedisValue{
                     Some((start_id_pre, start_id_post)) => {
                         match stop_id.split_once("-"){
                             Some((stop_id_pre, stop_id_post)) => {
-                                let time_range = start_id_pre.parse::<u128>().unwrap()..stop_id_pre.parse::<u128>().unwrap();
-                                let sequence_range = start_id_post.parse::<u64>().unwrap()..stop_id_post.parse::<u64>().unwrap();
-                                println!("{:?}", time_range);
-                                println!("{:?}", sequence_range);
+                                let time_range = start_id_pre.parse::<u128>().unwrap()..=stop_id_pre.parse::<u128>().unwrap();
+                                let sequence_range = start_id_post.parse::<u64>().unwrap()..=stop_id_post.parse::<u64>().unwrap();
                                 for time in time_range{
-                                    println!("{}", time);
                                     for sequence in sequence_range.clone(){
-                                        println!("{}", sequence);
                                         let id = time.to_string() + "-" + &sequence.to_string();
                                         if let Some(entry) = stream.map.get(&id){
                                             let flattened = entry.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
