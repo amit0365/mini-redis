@@ -1,22 +1,62 @@
 #![allow(unused_imports)]
-use std::{collections::{HashMap, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant}};
+use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant}};
 
 use tokio::sync::Notify;
 
 #[derive(Clone)]
-struct RedisState<K, E, V> {
-    map: Arc<RwLock<HashMap<K, V>>>,
-    list_state: ListState<K, E>,
+enum RedisValue{
+    String(String),
+    StringWithTimeout((String, Option<Instant>)),
+    List(VecDeque<String>),
+    Stream(StreamValue<String, String>)
 }
 
 #[derive(Clone)]
-struct ListState<K, E>{
-    list: Arc<Mutex<HashMap<K, VecDeque<E>>>>,    
-    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, E)>>>>>,    
+struct StreamValue<K, V>{
+    id: String,
+    pairs: Vec<(K, V)>
+}
+
+impl StreamValue<String, String>{
+    fn new(id: String, pairs_flattened: Vec<String>) -> Self {
+        let pairs_grouped = pairs_flattened.chunks(2).map(|pair| (pair[0].clone(), pair[1].clone())).collect::<Vec<(String, String)>>();
+        StreamValue { id, pairs: pairs_grouped }
+    }
+}
+
+impl RedisValue{
+    fn as_string(&self) -> Option<&String>{
+        match self{
+            RedisValue::String(s) => Some(s),
+            RedisValue::StringWithTimeout((s, _)) => Some(s),
+            _ => None
+        }
+    }
+}
+
+fn collect_as_strings<I>(iter: I) -> Vec<String>
+    where 
+        I: IntoIterator<Item = RedisValue>
+    {
+        iter.into_iter()
+        .filter_map(|v| v.as_string().cloned())
+        .collect::<Vec<String>>()
+    }
+
+#[derive(Clone)]
+struct RedisState<K, RedisValue> {
+    map: Arc<RwLock<HashMap<K, RedisValue>>>,
+    list_state: ListState<K, RedisValue>,
+}
+
+#[derive(Clone)]
+struct ListState<K, RedisValue>{
+    list: Arc<Mutex<HashMap<K, VecDeque<RedisValue>>>>,    
+    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,    
 
 }
 
-impl<K, V> ListState<K, V>{
+impl<K> ListState<K, RedisValue>{
     fn new() -> Self{
         let list = Arc::new(Mutex::new(HashMap::new()));
         let waiters = Arc::new(Mutex::new(HashMap::new()));
@@ -24,10 +64,10 @@ impl<K, V> ListState<K, V>{
     }
 }
 
-impl RedisState<String, String, (String, Option<Instant>)>{
+impl RedisState<String, RedisValue>{
     fn new() -> Self{
         let map = Arc::new(RwLock::new(HashMap::new()));
-        let list_state = ListState::new();
+        let list_state = ListState::<String, RedisValue>::new();
         RedisState { map, list_state }
     }
 
@@ -37,7 +77,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
         {
             let mut list_guard = self.list_state.list.lock().unwrap();
-            let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
+            let items = command.iter().skip(2).map(|v| RedisValue::String(v.to_string())).collect::<Vec<RedisValue>>();
             list_guard.entry(key.clone())
             .or_insert(VecDeque::new())
             .extend(items);
@@ -61,7 +101,7 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
     fn lpush(&mut self, command: &Vec<String>) -> String {
         let mut list_guard = self.list_state.list.lock().unwrap();
-        let items = command.iter().skip(2).cloned().collect::<Vec<String>>();
+        let items = command.iter().skip(2).map(|v| RedisValue::String(v.to_string())).collect::<Vec<RedisValue>>();
         for item in items.iter() {
             list_guard.entry(command[1].clone())
             .or_insert(VecDeque::new())
@@ -89,7 +129,11 @@ impl RedisState<String, String, (String, Option<Instant>)>{
                         let len = n.parse::<usize>().unwrap(); //remove unwrap
                         for _ in 0..len{
                             match list.pop_front(){
-                                Some(popped) => popped_list.push(popped),
+                                Some(popped) => {
+                                    if let Some(val) = popped.as_string(){
+                                        popped_list.push(val.clone());
+                                    }
+                                }
                                 None => (),
                             }
                         }
@@ -99,7 +143,11 @@ impl RedisState<String, String, (String, Option<Instant>)>{
 
                     None => {
                         match list.pop_front(){
-                            Some(popped) => format!("${}\r\n{}\r\n", popped.len(), popped),
+                            Some(popped) => {
+                                if let Some(val) = popped.as_string(){
+                                    format!("${}\r\n{}\r\n", val.len(), val)
+                                } else {format!("$-1\r\n")} // fix this
+                            }
                             None => format!("$-1\r\n"),
                         }
                     },
@@ -117,7 +165,9 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             let mut list_guard = self.list_state.list.lock().unwrap();
             if let Some(list) = list_guard.get_mut(key){
                 if let Some(data) = list.pop_front(){
-                    return encode_resp_array(&vec![key.clone(), data])
+                    if let Some(val) = data.as_string(){
+                        return encode_resp_array(&vec![key.clone(), val.clone()])
+                    }
                 }
             }
         }
@@ -135,12 +185,20 @@ impl RedisState<String, String, (String, Option<Instant>)>{
         let timeout: f64 = command.last().unwrap().parse().unwrap();
         if timeout == 0.0 {
             match receiver.recv(){
-                Ok((key, value)) => encode_resp_array(&vec![key, value]),
-                Err(e) => format!("$\r\n"), // fix this
+                Ok((key, value)) => {
+                    if let Some(val) = value.as_string(){
+                        encode_resp_array(&vec![key, val.clone()])
+                    } else {format!("$\r\n")} //fix this
+                }
+                Err(e) => format!("$\r\n"), //fix this
             }
         } else {
             match receiver.recv_timeout(Duration::from_secs_f64(timeout)){
-                Ok((key, value)) => encode_resp_array(&vec![key, value]),
+                Ok((key, value)) => {
+                    if let Some(val) = value.as_string(){
+                        encode_resp_array(&vec![key, val.clone()])
+                    } else {format!("$\r\n")} //fix this
+                },
                 Err(mpsc::RecvTimeoutError::Timeout) => format!("*-1\r\n"),
                 Err(mpsc::RecvTimeoutError::Disconnected) => format!("*-1\r\n"),
             }
@@ -167,15 +225,30 @@ impl RedisState<String, String, (String, Option<Instant>)>{
             None => VecDeque::new()
         };
 
-        encode_resp_array(&array.into())
+        encode_resp_array(&collect_as_strings(array))
     } 
 
     fn type_command(&self, command: &Vec<String>) -> String {
         let map_guard = self.map.read().unwrap();
         match map_guard.get(&command[1]){
-            Some((val, _)) => "string".to_string(),
+            Some(val) => {
+                match val{
+                    RedisValue::String(_) => "string".to_string(),
+                    RedisValue::Stream(_) => "stream".to_string(),
+                    _ => "none".to_string() // CHECK THIS
+                }
+            },
             None => "none".to_string()
         }
+    } 
+
+    fn xadd(&self, command: &Vec<String>) -> String {
+        let mut map_guard = self.map.write().unwrap();
+        let id = command[2].clone();
+        let pairs_flattened = command.iter().skip(2).cloned().collect::<Vec<String>>();
+        let stream_state = RedisValue::Stream(StreamValue::new(id.clone(), pairs_flattened));
+        map_guard.insert(command[1].clone(), stream_state);
+        id
     } 
 }
 
@@ -197,7 +270,7 @@ fn parse_wrapback(idx: i64, len: usize) -> usize{
 fn encode_resp_array(array: &Vec<String>) -> String{
     let mut encoded_array = format!["*{}\r\n", array.len()];
     for item in array {
-        encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item));
+        encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
     }
     encoded_array
 }
@@ -250,17 +323,17 @@ fn main() {
                                                     match str.to_uppercase().as_str(){
                                                         "PX" => {
                                                             let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
-                                                            local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
+                                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), Some(timeout))));
                                                         },
                                                         "EX" => {
                                                             let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
-                                                            local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), Some(timeout)));
+                                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), Some(timeout))));
                                                         },
                                                         _ => (),
                                                     }
                                                 }
                                                 None => {
-                                                    local_state.map.write().unwrap().insert(commands[1].clone(), (commands[2].clone(), None));
+                                                    local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), None)));
                                                 }
                                             }
                                             
@@ -268,19 +341,25 @@ fn main() {
                                         },
                                         "GET" => {
                                             if let Some(value) = local_state.map.read().unwrap().get(&commands[1]){
-                                                if let Some(timeout) = value.1{
-                                                    if Instant::now() < timeout {
-                                                        let response = format!("${}\r\n{}\r\n", value.0.len(), value.0);
+                                                match value{
+                                                    RedisValue::StringWithTimeout((value, timeout)) => {
+                                                        if let Some(t) = timeout{
+                                                            if Instant::now() < *t {
+                                                                let response = format!("${}\r\n{}\r\n", value.len(), value);
+                                                                stream.write_all(response.as_bytes()).unwrap()
+                                                            } else {
+                                                                stream.write_all(b"$-1\r\n").unwrap()
+                                                            } 
+                                                        } else {
+                                                            stream.write_all(b"$-1\r\n").unwrap() // not satisfied no timeout gives error. should we enforce type? or just same logic as string or remove string?
+                                                        }
+                                                    },
+                                                    RedisValue::String(val) => {
+                                                        let response = format!("${}\r\n{}\r\n", val.len(), val);
                                                         stream.write_all(response.as_bytes()).unwrap()
-                                                    } else {
-                                                        stream.write_all(b"$-1\r\n").unwrap()
-                                                    } 
-                                                } else {
-                                                    let response = format!("${}\r\n{}\r\n", value.0.len(), value.0);
-                                                    stream.write_all(response.as_bytes()).unwrap()
+                                                    },
+                                                    _ => (), // wrong type
                                                 }
-                                            } else {
-                                                stream.write_all(b"$-1\r\n").unwrap()
                                             }
                                         },
                                         "RPUSH" => {
@@ -309,6 +388,11 @@ fn main() {
                                         },
                                        "TYPE" => {
                                             let response = format!("+{}\r\n", local_state.type_command(&commands));
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "XADD" => {
+                                            let val = local_state.xadd(&commands);
+                                            let response = format!("${}\r\n{}\r\n", val.len(), val);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         _ => (),
