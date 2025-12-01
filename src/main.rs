@@ -49,12 +49,12 @@ impl RedisValue{
                 let mut new_id = id.clone();
                 let (id_pre, id_post) = id.split_once("-").unwrap();
                 let id_millisecs = id_pre.parse::<u64>().unwrap(); 
-                let id_sequence_num: u64;
+                let mut id_sequence_num: u64 = 0;
                 if id_post == "*"{
                     if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
                         id_sequence_num = last_sequence_num + 1;
-                    } else { if id_millisecs == 0 {id_sequence_num = 1 } else {
-                        id_sequence_num = 0;}
+                    } else { 
+                        if id_millisecs == 0 {id_sequence_num = 1 }
                     }
                     new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string()
                 } else {
