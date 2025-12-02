@@ -79,6 +79,8 @@ impl RedisValue{
                             entries.push(json!([id, flattened]));
                         } 
                     });
+                    
+                    println!("{}", entries.len());
                 }
 
                 let mut encoded_array = String::new();
