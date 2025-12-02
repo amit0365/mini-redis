@@ -48,17 +48,15 @@ impl RedisValue{
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
-                    println!("start");
                     let stop_time: u128;
                     let stop_seq: u64;
                     if stop_id.as_str() == "+"{
-                        println!("plus");
                         stop_time = u128::MAX;
                         stop_seq = u64::MAX;
                     } else {
                         if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
                             stop_time = stop_id_pre.parse::<u128>().unwrap();
-                            stop_seq = stop_id_pre.parse::<u64>().unwrap();
+                            stop_seq = stop_id_post.parse::<u64>().unwrap();
                         } else { return format!("not supported")} 
                     }
 
