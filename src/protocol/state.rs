@@ -306,20 +306,33 @@ impl RedisState<String, RedisValue>{
                     receiver
                 };
 
-                tokio::select! {
-                    result = receiver.recv() => {
-                        if let Some((key, redis_val)) = result {
+                if *timeout == 0 {
+                    match receiver.recv().await{
+                        Some((key, redis_val)) => {
                             if let Some(value_array) = redis_val.get_blocked_result(){
                                 let mut encoded_array = String::new();
                                 return encode_resp_value_array(&mut encoded_array, &vec![json!([key, value_array])])
                             }
                             format!("*-1\r\n")
-                        } else {format!("*-1\r\n")}
-                    },
-
-                    _ = sleep(Duration::from_millis(*timeout)) => {
-                        format!("*-1\r\n")
-                    },
+                        },
+                        None => format!("*-1\r\n")
+                    }
+                } else {
+                    tokio::select! {
+                        result = receiver.recv() => {
+                            if let Some((key, redis_val)) = result {
+                                if let Some(value_array) = redis_val.get_blocked_result(){
+                                    let mut encoded_array = String::new();
+                                    return encode_resp_value_array(&mut encoded_array, &vec![json!([key, value_array])])
+                                }
+                                format!("*-1\r\n")
+                            } else {format!("*-1\r\n")}
+                        },
+    
+                        _ = sleep(Duration::from_millis(*timeout)) => {
+                            format!("*-1\r\n")
+                        },
+                    }
                 }
             },
 
