@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, process::Command, str, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, ops::RangeInclusive, process::Command, str, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}, u128};
 use serde_json::{json, Value};
 use tokio::sync::Notify;
 
@@ -14,7 +14,7 @@ enum RedisValue{
 struct StreamValue<K, V>{
     last_id: K,
     time_map: HashMap<u128, u64>, //time -> last seqquence number
-    map: HashMap<K, Vec<(K, V)>>
+    map: HashMap<K, (u128, u64, Vec<(K, V)>)>
 }
 
 impl StreamValue<String, String>{
@@ -22,13 +22,13 @@ impl StreamValue<String, String>{
         StreamValue { last_id: String::new(), time_map: HashMap::new(), map: HashMap::new() }
     }
 
-    fn insert(&mut self, id: &String, pairs_flattened: Vec<String>) -> Option<Vec<(String, String)>> {
+    fn insert(&mut self, id: &String, id_time: u128, id_seq: u64, pairs_flattened: Vec<String>) -> Option<(u128, u64, Vec<(String, String)>)> {
         let pairs_grouped = pairs_flattened
         .chunks_exact(2)
         .map(|pair| (pair[0].clone(), pair[1].clone()))
         .collect::<Vec<(String, String)>>();
         
-        self.map.insert(id.clone(), pairs_grouped)
+        self.map.insert(id.clone(), (id_time, id_seq, pairs_grouped))
     }
 }
 
@@ -53,30 +53,37 @@ impl RedisValue{
                             return format!("-ERR The ID");
                         }
 
-                        let start_id_pre_parsed: u128;
-                        let start_id_post_parsed: u64;
+                        let start_time: u128;
+                        let start_seq: u64;
                         if start_id.as_str() == "-"{
-                            start_id_pre_parsed = 0;
-                            start_id_post_parsed = 0;
+                            start_time = 0;
+                            start_seq = 0;
                         } else {
-                            start_id_pre_parsed = start_id_pre.parse::<u128>().unwrap();
-                            start_id_post_parsed = start_id_post.parse::<u64>().unwrap();
+                            start_time = start_id_pre.parse::<u128>().unwrap();
+                            start_seq = start_id_post.parse::<u64>().unwrap();
                         }
 
-
-                        let time_range = start_id_pre_parsed..=stop_id_pre.parse::<u128>().unwrap();
-                        let sequence_range = start_id_post_parsed..=stop_id_post.parse::<u64>().unwrap();
-                        for time in time_range{
-                            for sequence in sequence_range.clone(){
-                                let id = time.to_string() + "-" + &sequence.to_string();
-                                if let Some(entry) = stream.map.get(&id){
-                                    let flattened = entry.iter()
-                                    .flat_map(|(k, v)| [k.clone(), v.clone()])
-                                    .collect::<Vec<String>>();
-                                    entries.push(json!([id, flattened]));
-                                }
-                            } 
+                        let stop_time: u128;
+                        let stop_seq: u64;
+                        if stop_id.as_str() == "+"{
+                            stop_time = u128::MAX;
+                            stop_seq = u64::MAX;
+                        } else {
+                            stop_time = stop_id_pre.parse::<u128>().unwrap();
+                            stop_seq = stop_id_pre.parse::<u64>().unwrap();
                         }
+
+                        stream.map.iter().filter(|e| {
+                            let (time, seq, pairs) = e.1;
+                            let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
+                            if result {
+                                let id = time.to_string() + "-" + &seq.to_string();
+                                let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+                                entries.push(json!([id, flattened]));
+                            }
+
+                            result   
+                        });
                     }
                 }
 
@@ -92,6 +99,8 @@ impl RedisValue{
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
                 let mut new_id = id.clone();
+                let mut new_id_time = 0;
+                let mut new_id_seq = 0;
                 match id.as_str(){
                     "*" => {
                         let millis = SystemTime::now()
@@ -106,7 +115,9 @@ impl RedisValue{
                             id_sequence_num = 0
                         }
 
-                        new_id = millis.to_string() + "-" + &id_sequence_num.to_string();
+                        new_id_time = millis;
+                        new_id_seq = id_sequence_num;
+                        new_id = new_id_time.to_string() + "-" + &new_id_seq.to_string();
                     },
                     _ => {
                         if let Some((id_pre, id_post)) = id.split_once("-"){
@@ -123,7 +134,10 @@ impl RedisValue{
                                     } else { 
                                         if id_millisecs == 0 { id_sequence_num = 1 }
                                     }
-                                    new_id = id_pre.to_string() + "-" + &id_sequence_num.to_string();
+
+                                    new_id_time = id_millisecs;
+                                    new_id_seq = id_sequence_num;
+                                    new_id = new_id_time.to_string() + "-" + &new_id_seq.to_string();
                                 },
                                 _ => id_sequence_num = id_post.parse::<u64>().unwrap(),
                             }
@@ -134,7 +148,7 @@ impl RedisValue{
             
                             let last_id = &stream.last_id;
                             if last_id.is_empty(){ //new entry
-                                stream.insert(&new_id, pairs_flattened);
+                                stream.insert(&new_id, id_millisecs, id_sequence_num, pairs_flattened);
                                 stream.last_id = new_id.clone();
                                 return format!("${}\r\n{}\r\n", new_id.len(), new_id)
                             }
@@ -163,11 +177,13 @@ impl RedisValue{
                             }
 
                             stream.last_id = new_id.clone(); //update id
+                            new_id_time = id_millisecs;
+                            new_id_seq = id_sequence_num;
                         }
                     },
                 }
 
-                stream.insert(&new_id, pairs_flattened);
+                stream.insert(&new_id, new_id_time, new_id_seq, pairs_flattened);
                 format!("${}\r\n{}\r\n", new_id.len(), new_id)
             }
         }
