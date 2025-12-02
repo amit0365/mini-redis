@@ -408,6 +408,8 @@ impl RedisState<String, RedisValue>{
     } 
 
     fn xrange(&self, command: &Vec<String>) -> String {
+        println!("{}", command[2]);
+        println!("{}", command[3]);
         self.map.read().unwrap()
         .get(&command[1])
         .unwrap() // no case for nil
