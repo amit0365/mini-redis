@@ -41,13 +41,12 @@ impl RedisValue{
         }
     }
 
-    fn get_stream_range(&self, key: &String, start_id: &String, stop_id: Option<&String>) -> String{
+    fn get_stream_range(&self, start_id: &String, stop_id: Option<&String>) -> Vec<Value>{
         match self{
-            RedisValue::String(_) => format!("not supported"),
-            RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
+            RedisValue::String(_) => Vec::new(), //format!("not supported"),
+            RedisValue::StringWithTimeout((_, _)) => Vec::new(), //format!("not supported"),
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
-                let mut encoded_array = String::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
                     let stop_time: Option<u128>;
                     let stop_seq: Option<u64>;
@@ -67,7 +66,7 @@ impl RedisValue{
                                             stop_seq = Some(stop_id_post.parse::<u64>().unwrap());
                                         },
 
-                                        None => return format!("not supported"),
+                                        None => return Vec::new() //format!("not supported"),
                                     } 
                                 },
                             }
@@ -105,12 +104,12 @@ impl RedisValue{
                         if result { entries.push(json!([e.0, flattened]));}
                     });
 
-                    if  stop_time.is_none() && stop_seq.is_none() && stop_id.is_none(){ //xread
-                        return encode_resp_value_array(&mut encoded_array, &vec![json!([key, entries])])
-                    }
+                    // if  stop_time.is_none() && stop_seq.is_none() && stop_id.is_none(){ //xread
+                    //     return encode_resp_value_array(&mut encoded_array, &vec![json!([key, entries])])
+                    // }
                 }
 
-                encode_resp_value_array(&mut encoded_array, &entries)
+                entries
             }
         }
     }
@@ -429,17 +428,32 @@ impl RedisState<String, RedisValue>{
     } 
 
     fn xrange(&self, command: &Vec<String>) -> String {
-        self.map.read().unwrap()
+        let mut encoded_array = String::new();
+        let values = self.map.read().unwrap()
         .get(&command[1])
         .unwrap() // no case for nil
-        .get_stream_range(&command[1], &command[2], Some(&command[3]))
+        .get_stream_range(&command[2], Some(&command[3]));
+        encode_resp_value_array(&mut encoded_array, &values)
     } 
 
     fn xread(&self, command: &Vec<String>) -> String {
-        self.map.read().unwrap()
-        .get(&command[2])
-        .unwrap() // no case for nil
-        .get_stream_range(&command[2], &command[3], None)
+        let key_tokens = command.iter().skip(2)
+        .filter(|token| self.map.read().unwrap().get(token.as_str()).is_some())
+        .collect::<Vec<_>>();
+
+        let id_tokens = command.iter().skip(2 + key_tokens.len()).collect::<Vec<_>>();
+        let mut encoded_array = String::new();
+        let mut key_entries = Vec::new();
+
+        for (key, id) in key_tokens.iter().zip(id_tokens){
+            let values = self.map.read().unwrap()
+            .get(*key)
+            .unwrap() // no case for nil
+            .get_stream_range(id, None);
+            key_entries.push(json!([key, values]));
+        }
+
+        encode_resp_value_array(&mut encoded_array, &key_entries)
     } 
 }
 
