@@ -340,7 +340,7 @@ impl RedisState<String, RedisValue>{
     }
 
     pub fn subscribe(&self, command: &Vec<String>) -> String{
-        encode_resp_array(&vec![command[0].to_owned(), command[1].to_owned(), 1.to_string()])
+        encode_resp_array(&vec![command[0].to_lowercase().to_owned(), command[1].to_owned(), 1.to_string()])
     }
 
 }
