@@ -46,34 +46,34 @@ impl RedisState<String, RedisValue>{
         RedisState { map_state, list_state }
     }
 
-    pub async fn rpush(&mut self, command: &Vec<String>) -> String {
+    pub fn rpush(&mut self, command: &Vec<String>) -> String {
+        let mut count = String::new();
         let key = &command[1];
 
-        let count = {
+        {
             let mut list_guard = self.list_state.list.lock().unwrap();
             let items = command.iter().skip(2).map(|v| RedisValue::String(v.to_string())).collect::<Vec<RedisValue>>();
             list_guard.entry(key.clone())
             .or_insert(VecDeque::new())
             .extend(items);
-            list_guard.get(key).unwrap().len().to_string()
-        };
-
-        let sender_and_value = {
-            let mut waiters_guard = self.list_state.waiters.lock().unwrap();
-            if let Some(waiting_queue) = waiters_guard.get_mut(key){
-                if let Some(sender) = waiting_queue.pop_front(){
-                    let mut list_guard = self.list_state.list.lock().unwrap();
-                    if let Some(deque) = list_guard.get_mut(key){
-                        if let Some(value) = deque.pop_front(){
-                            Some((sender, key.clone(), value))
-                        } else { None }
-                    } else { None }
-                } else { None }
-            } else { None }
-        };
-
-        if let Some((sender, key, value)) = sender_and_value {
-            let _ = sender.send((key, value)).await;
+            count = list_guard.get(key).unwrap().len().to_string();
+        }
+        
+        let mut waiters_guard = self.list_state.waiters.lock().unwrap();
+        if let Some(waiting_queue) = waiters_guard.get_mut(key){
+            while let Some(sender) = waiting_queue.pop_front(){
+                let mut list_guard = self.list_state.list.lock().unwrap();
+                if let Some(deque) = list_guard.get_mut(key){
+                    if let Some(value) = deque.pop_front(){
+                        drop(list_guard); // Release lock before sending
+                        match sender.try_send((key.clone(), value)){
+                            Ok(_) => break,
+                            Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
+                            Err(TrySendError::Closed(_)) => continue,
+                        }
+                    }
+                }
+            }
         }
 
         count
