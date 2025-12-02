@@ -66,6 +66,7 @@ impl RedisValue{
                         let stop_time: u128;
                         let stop_seq: u64;
                         if stop_id.as_str() == "+"{
+                            println!("plus");
                             stop_time = u128::MAX;
                             stop_seq = u64::MAX;
                         } else {
@@ -73,7 +74,7 @@ impl RedisValue{
                             stop_seq = stop_id_pre.parse::<u64>().unwrap();
                         }
 
-                        stream.map.iter().filter(|e| {
+                        let _ = stream.map.iter().filter(|e| {
                             let (time, seq, pairs) = e.1;
                             let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
                             if result {
