@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::{HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, ops::RangeInclusive, process::Command, str, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}, u128};
+use std::{collections::{BTreeMap, HashMap, HashSet, VecDeque}, fmt::Error, hash::Hash, io::{Read, Write}, net::TcpListener, ops::RangeInclusive, process::Command, str, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}, u128};
 use serde_json::{json, Value};
 use tokio::sync::Notify;
 
@@ -14,12 +14,12 @@ enum RedisValue{
 struct StreamValue<K, V>{
     last_id: K,
     time_map: HashMap<u128, u64>, //time -> last seqquence number
-    map: HashMap<K, (u128, u64, Vec<(K, V)>)>
+    map: BTreeMap<K, (u128, u64, Vec<(K, V)>)>
 }
 
 impl StreamValue<String, String>{
     fn new() -> Self {
-        StreamValue { last_id: String::new(), time_map: HashMap::new(), map: HashMap::new() }
+        StreamValue { last_id: String::new(), time_map: HashMap::new(), map: BTreeMap::new() }
     }
 
     fn insert(&mut self, id: &String, id_time: u128, id_seq: u64, pairs_flattened: Vec<String>) -> Option<(u128, u64, Vec<(String, String)>)> {
@@ -72,19 +72,14 @@ impl RedisValue{
                         start_seq = start_id_post.parse::<u64>().unwrap();
                     }
 
-                    let filtered = stream.map.iter().filter(|e| {
-                        let (time, seq, _) = e.1;
-                        *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq
-                    });
-
-                    filtered.for_each(|e| {
+                    stream.map.iter().for_each(|e| {
                         let (time, seq, pairs) = e.1;
-                        let id = time.to_string() + "-" + &seq.to_string();
-                        let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                        entries.push(json!([id, flattened]));
+                        let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
+                        if result {
+                            let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+                            entries.push(json!([e.0, flattened]));
+                        }
                     });
-
-                    println!("{}", entries.len());
                 }
 
                 let mut encoded_array = String::new();
