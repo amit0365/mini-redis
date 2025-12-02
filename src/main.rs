@@ -50,7 +50,7 @@ impl RedisValue{
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
                     println!("start");
                     if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
-                        
+                        println!("stop");
                         let start_time: u128;
                         let start_seq: u64;
                         if start_id.as_str() == "-"{
