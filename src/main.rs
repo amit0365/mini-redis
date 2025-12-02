@@ -72,13 +72,16 @@ impl RedisValue{
                         start_seq = start_id_post.parse::<u64>().unwrap();
                     }
 
-                    stream.map.iter().for_each(|e| {
+                    let filtered = stream.map.iter().filter(|e| {
+                        let (time, seq, _) = e.1;
+                        *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq
+                    });
+
+                    filtered.for_each(|e| {
                         let (time, seq, pairs) = e.1;
-                        let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
-                        if result {
-                            let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                            entries.push(json!([e.0, flattened]));
-                        } 
+                        let id = time.to_string() + "-" + &seq.to_string();
+                        let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+                        entries.push(json!([id, flattened]));
                     });
 
                     println!("{}", entries.len());
