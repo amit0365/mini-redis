@@ -41,23 +41,43 @@ impl RedisValue{
         }
     }
 
-    fn get_stream_range(&self, start_id: &String, stop_id: &String) -> String{
+    fn get_stream_range(&self, key: &String, start_id: &String, stop_id: Option<&String>) -> String{
         match self{
             RedisValue::String(_) => format!("not supported"),
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
+                let mut encoded_array = String::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
-                    let stop_time: u128;
-                    let stop_seq: u64;
-                    if stop_id.as_str() == "+"{
-                        stop_time = u128::MAX;
-                        stop_seq = u64::MAX;
-                    } else {
-                        if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
-                            stop_time = stop_id_pre.parse::<u128>().unwrap();
-                            stop_seq = stop_id_post.parse::<u64>().unwrap();
-                        } else { return format!("not supported")} 
+                    let stop_time: Option<u128>;
+                    let stop_seq: Option<u64>;
+                    println!("start");
+
+                    match stop_id{
+                        Some(stop_id ) => {
+                            match stop_id.as_str(){
+                                "+" => {
+                                    stop_time = None;
+                                    stop_seq = None;
+                                },
+                                _ => {
+                                    match stop_id.split_once("-"){
+                                        Some((stop_id_pre, stop_id_post)) => {
+                                            stop_time = Some(stop_id_pre.parse::<u128>().unwrap());
+                                            stop_seq = Some(stop_id_post.parse::<u64>().unwrap());
+                                        },
+
+                                        None => return format!("not supported"),
+                                    } 
+                                },
+                            }
+                        },
+
+                        None => {
+                            println!("xread");
+                            stop_time = None;
+                            stop_seq = None;
+                        },
                     }
 
                     let start_time: u128;
@@ -72,15 +92,24 @@ impl RedisValue{
 
                     stream.map.iter().for_each(|e| {
                         let (time, seq, pairs) = e.1;
-                        let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
-                        if result {
-                            let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                            entries.push(json!([e.0, flattened]));
-                        }
+                        let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+
+                        let result = if stop_time.is_some() && stop_seq.is_some() && stop_id.is_some(){
+                            *time >= start_time && *time <= stop_time.unwrap() && *seq >= start_seq && *seq <= stop_seq.unwrap()
+                        } else if stop_time.is_none() && stop_seq.is_none() && stop_id.is_some(){
+                            *time >= start_time && *seq >= start_seq 
+                        } else { // xread
+                            *time > start_time || *seq > start_seq
+                        };
+
+                        if result { entries.push(json!([e.0, flattened]));}
                     });
+
+                    if  stop_time.is_none() && stop_seq.is_none() && stop_id.is_none(){ //xread
+                        return encode_resp_value_array(&mut encoded_array, &vec![json!([key, entries])])
+                    }
                 }
 
-                let mut encoded_array = String::new();
                 encode_resp_value_array(&mut encoded_array, &entries)
             }
         }
@@ -403,7 +432,14 @@ impl RedisState<String, RedisValue>{
         self.map.read().unwrap()
         .get(&command[1])
         .unwrap() // no case for nil
-        .get_stream_range(&command[2], &command[3])
+        .get_stream_range(&command[1], &command[2], Some(&command[3]))
+    } 
+
+    fn xread(&self, command: &Vec<String>) -> String {
+        self.map.read().unwrap()
+        .get(&command[2])
+        .unwrap() // no case for nil
+        .get_stream_range(&command[2], &command[3], None)
     } 
 }
 
@@ -558,6 +594,10 @@ fn main() {
                                         },
                                         "XRANGE" => {
                                             let response = local_state.xrange(&commands);
+                                            stream.write_all(response.as_bytes()).unwrap()
+                                        },
+                                        "XREAD" => {
+                                            let response = local_state.xread(&commands);
                                             stream.write_all(response.as_bytes()).unwrap()
                                         },
                                         _ => (),
