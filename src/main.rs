@@ -48,7 +48,9 @@ impl RedisValue{
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
+                    println!("start");
                     if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
+                        println!("stop");
                         if stop_id_pre.is_empty() || stop_id_post.is_empty(){
                             return format!("-ERR The ID");
                         }
@@ -408,8 +410,6 @@ impl RedisState<String, RedisValue>{
     } 
 
     fn xrange(&self, command: &Vec<String>) -> String {
-        println!("{}", command[2]);
-        println!("{}", command[3]);
         self.map.read().unwrap()
         .get(&command[1])
         .unwrap() // no case for nil
