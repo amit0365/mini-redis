@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::Notify , net::TcpListener};
 use crate::{protocol::{RedisState, RedisValue}, utils::parse_resp};
 
@@ -11,15 +11,23 @@ async fn main() {
     println!("Logs from your program will appear here!");
         
     let listener = Arc::new(TcpListener::bind("127.0.0.1:6379").await.unwrap());
+    let connection_count = Arc::new(AtomicUsize::new(0));
     let state = RedisState::new();
     
     loop {
         let (mut stream, _addr) = listener.accept().await.unwrap();
-        println!("accepted new connection");
-        let mut buf = [0; 512];
+            println!("accepted new connection");
 
+        let mut buf = [0; 512];
         let mut local_state = state.clone();
 
+        let count = connection_count.fetch_add(1, Ordering::SeqCst);
+        if count >= 10000 {
+            connection_count.fetch_sub(1, Ordering::SeqCst);
+            continue;
+        }
+
+        let cc = connection_count.clone();
         tokio::spawn(async move {
             loop {
                 match stream.read(&mut buf).await {
@@ -92,7 +100,7 @@ async fn main() {
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "BLPOP" => {
-                                    let response = local_state.blpop(&commands);
+                                    let response = local_state.blpop(&commands).await;
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "LRANGE" => {
@@ -122,6 +130,8 @@ async fn main() {
                     Err(_) => break,
                 }
             }
+
+            cc.fetch_sub(1, Ordering::SeqCst);
         });
     }
 }

@@ -1,5 +1,5 @@
-use std::{collections::{HashMap, VecDeque}, sync::{Arc, Mutex, RwLock, mpsc::{self, Sender}}, time::Duration};
-
+use std::{collections::{HashMap, VecDeque}, sync::{Arc, Mutex, RwLock}, time::Duration};
+use tokio::{sync::mpsc::{self, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
 use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
@@ -47,11 +47,15 @@ impl RedisState<String, RedisValue>{
         
         let mut waiters_guard = self.list_state.waiters.lock().unwrap();
         if let Some(waiting_queue) = waiters_guard.get_mut(key){
-            if let Some(sender) = waiting_queue.pop_front(){
+            while let Some(sender) = waiting_queue.pop_front(){
                 let mut list_guard = self.list_state.list.lock().unwrap();
                 if let Some(deque) = list_guard.get_mut(key){
                     if let Some(value) = deque.pop_front(){
-                        let _ = sender.send((key.clone(), value));
+                        match sender.try_send((key.clone(), value)){
+                            Ok(_) => break,
+                            Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
+                            Err(TrySendError::Closed(_)) => continue,
+                        }
                     }
                 }
             }
@@ -119,7 +123,7 @@ impl RedisState<String, RedisValue>{
         }
     } 
 
-    pub fn blpop(&mut self, command: &Vec<String>) -> String {
+    pub async fn blpop(&mut self, command: &Vec<String>) -> String {
         let key = &command[1];
 
         {
@@ -133,35 +137,41 @@ impl RedisState<String, RedisValue>{
             }
         }
 
-        let receiver = {
+        let mut receiver = {
             let mut waiters_guard = self.list_state.waiters.lock().unwrap();
-            let (sender, receiver) = mpsc::channel();
-            waiters_guard.entry(key.clone())
-                .or_insert(VecDeque::new())
-                .push_back(sender);
+            let queue = waiters_guard.entry(key.clone()).or_insert(VecDeque::new());
+            if queue.len() > 10000 {
+                return format!("ERR_TOO_MANY_WAITERS_FOR_THE_KEY")
+            }
 
+            let (sender, receiver) = mpsc::channel(1);
+            queue.push_back(sender);
             receiver
         };
 
         let timeout: f64 = command.last().unwrap().parse().unwrap(); // yo check this
         if timeout == 0.0 {
-            match receiver.recv(){
-                Ok((key, value)) => {
+            match receiver.recv().await{
+                Some((key, value)) => {
                     if let Some(val) = value.as_string(){
                         encode_resp_array(&vec![key, val.clone()])
                     } else {format!("$\r\n")} //fix this
                 }
-                Err(_) => format!("$\r\n"), //fix this
+                None => format!("$\r\n"), //todo fix this
             }
         } else {
-            match receiver.recv_timeout(Duration::from_secs_f64(timeout)){
-                Ok((key, value)) => {
-                    if let Some(val) = value.as_string(){
-                        encode_resp_array(&vec![key, val.clone()])
-                    } else {format!("$\r\n")} //fix this
-                },
-                Err(mpsc::RecvTimeoutError::Timeout) => format!("*-1\r\n"),
-                Err(mpsc::RecvTimeoutError::Disconnected) => format!("*-1\r\n"),
+            tokio::select! {
+                result = receiver.recv() => {
+                    if let Some((key, value)) = result{
+                        if let Some(val) = value.as_string(){
+                            encode_resp_array(&vec![key, val.clone()])
+                        } else {format!("$\r\n")} //fix this
+                    } else {format!("*-1\r\n")} // none so disconnected or dropped
+                }
+
+                _ = sleep(Duration::from_secs_f64(timeout)) => {
+                    format!("*-1\r\n") 
+                }
             }
         }
     }
