@@ -72,7 +72,7 @@ impl RedisValue{
                         start_seq = start_id_post.parse::<u64>().unwrap();
                     }
 
-                    let _ = stream.map.iter().map(|e| {
+                    stream.map.iter().for_each(|e| {
                         let (time, seq, pairs) = e.1;
                         let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
                         if result {
