@@ -340,7 +340,7 @@ impl RedisState<String, RedisValue>{
     }
 
     pub fn subscribe(&self, command: &Vec<String>) -> String{
-        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:1\r\n", command[0].len(), command[0], command[1].len(), command[1])
+        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:1\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1])
     }
 
 }
