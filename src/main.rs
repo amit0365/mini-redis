@@ -51,6 +51,7 @@ impl RedisValue{
                     let stop_time: u128;
                     let stop_seq: u64;
                     if stop_id.as_str() == "+"{
+                        println!("plus");
                         stop_time = u128::MAX;
                         stop_seq = u64::MAX;
                     } else {
@@ -74,10 +75,8 @@ impl RedisValue{
                         let (time, seq, pairs) = e.1;
                         let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
                         if result {
-                            let id = time.to_string() + "-" + &seq.to_string();
                             let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                            println!("true");
-                            entries.push(json!([id, flattened]));
+                            entries.push(json!([e.0, flattened]));
                         } 
                     });
 
