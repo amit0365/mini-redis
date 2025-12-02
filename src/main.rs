@@ -70,16 +70,14 @@ impl RedisValue{
                         start_seq = start_id_post.parse::<u64>().unwrap();
                     }
 
-                    let _ = stream.map.iter().filter(|e| {
+                    let _ = stream.map.iter().map(|e| {
                         let (time, seq, pairs) = e.1;
                         let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
                         if result {
                             let id = time.to_string() + "-" + &seq.to_string();
                             let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
                             entries.push(json!([id, flattened]));
-                        }
-                    
-                       result   
+                        } 
                     });
                 }
 
@@ -342,7 +340,7 @@ impl RedisState<String, RedisValue>{
                         encode_resp_array(&vec![key, val.clone()])
                     } else {format!("$\r\n")} //fix this
                 }
-                Err(e) => format!("$\r\n"), //fix this
+                Err(_) => format!("$\r\n"), //fix this
             }
         } else {
             match receiver.recv_timeout(Duration::from_secs_f64(timeout)){
