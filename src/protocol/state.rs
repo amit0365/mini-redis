@@ -6,13 +6,13 @@ use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, enc
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
-    pub map: Arc<RwLock<HashMap<K, RedisValue>>>,
+    pub map_state: MapState<K, RedisValue>,
     pub list_state: ListState<K, RedisValue>,
 }
 
 #[derive(Clone)]
 pub struct ListState<K, RedisValue>{
-    list: Arc<Mutex<HashMap<K, VecDeque<RedisValue>>>>,    
+    list: Arc<Mutex<HashMap<K, VecDeque<RedisValue>>>>, // use rwlock instead
     waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,    
 
 }
@@ -25,11 +25,26 @@ impl<K> ListState<K, RedisValue>{
     }
 }
 
+#[derive(Clone)]
+pub struct MapState<K, RedisValue>{
+    pub map: Arc<RwLock<HashMap<K, RedisValue>>>, // add methods instread of pub fileds
+    pub waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,    
+
+}
+
+impl<K> MapState<K, RedisValue>{
+    fn new() -> Self{
+        let map = Arc::new(RwLock::new(HashMap::new()));
+        let waiters = Arc::new(Mutex::new(HashMap::new()));
+        MapState { map, waiters }
+    }
+}
+
 impl RedisState<String, RedisValue>{
     pub fn new() -> Self{
-        let map = Arc::new(RwLock::new(HashMap::new()));
-        let list_state = ListState::<String, RedisValue>::new();
-        RedisState { map, list_state }
+        let map_state = MapState::new();
+        let list_state = ListState::new();
+        RedisState { map_state, list_state }
     }
 
     pub fn rpush(&mut self, command: &Vec<String>) -> String {
@@ -141,7 +156,7 @@ impl RedisState<String, RedisValue>{
             let mut waiters_guard = self.list_state.waiters.lock().unwrap();
             let queue = waiters_guard.entry(key.clone()).or_insert(VecDeque::new());
             if queue.len() > 10000 {
-                return format!("ERR_TOO_MANY_WAITERS_FOR_THE_KEY")
+                return format!("ERR_TOO_MANY_BLPOP_WAITERS_FOR_THE_KEY")
             }
 
             let (sender, receiver) = mpsc::channel(1);
@@ -200,12 +215,13 @@ impl RedisState<String, RedisValue>{
     } 
 
     pub fn type_command(&self, command: &Vec<String>) -> String {
-        let map_guard = self.map.read().unwrap();
+        let map_guard = self.map_state.map.read().unwrap();
         match map_guard.get(&command[1]){
             Some(val) => {
                 match val{
                     RedisValue::String(_) => "string".to_string(),
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
+                    RedisValue::Stream(_) => "stream".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
                 }
             },
@@ -214,16 +230,34 @@ impl RedisState<String, RedisValue>{
     } 
 
     pub fn xadd(&self, command: &Vec<String>) -> String {
-        let mut map_guard = self.map.write().unwrap();
+        let key = &command[1];
+        let mut result = String::new();
         let pairs_flattened = command.iter().skip(3).cloned().collect::<Vec<String>>();
-        map_guard.entry(command[1].clone())
-        .or_insert(RedisValue::Stream(StreamValue::new()))
-        .update_stream(&command[2], pairs_flattened)
+
+        {
+            let mut map_guard = self.map_state.map.write().unwrap();
+            result = map_guard.entry(key.clone())
+            .or_insert(RedisValue::Stream(StreamValue::new()))
+            .update_stream(&command[2], &pairs_flattened);
+        }
+
+        let mut map_waiters_guard = self.map_state.waiters.lock().unwrap();
+        if let Some(waiters_queue) = map_waiters_guard.get_mut(key){
+            while let Some(waiter) = waiters_queue.pop_front(){
+                match waiter.try_send((key.clone(), RedisValue::Stream(StreamValue::new_blocked(&command[2], &pairs_flattened)))){
+                    Ok(_) => break,
+                    Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
+                    Err(TrySendError::Closed(_)) => continue,
+                }
+            }
+        }
+
+        result
     } 
 
     pub fn xrange(&self, command: &Vec<String>) -> String {
         let mut encoded_array = String::new();
-        let values = self.map.read().unwrap()
+        let values = self.map_state.map.read().unwrap()
         .get(&command[1])
         .unwrap() // no case for nil
         .get_stream_range(&command[2], Some(&command[3]));
@@ -232,25 +266,65 @@ impl RedisState<String, RedisValue>{
         } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
     } 
 
-    pub fn xread(&self, command: &Vec<String>) -> String {
-        let key_tokens = command.iter().skip(2)
-        .filter(|token| self.map.read().unwrap().get(token.as_str()).is_some())
-        .collect::<Vec<_>>();
+    pub async fn xread(&self, command: &Vec<String>) -> String {
+        match command[1].as_str(){
+            "streams" => {
+                let key_tokens = command.iter().skip(2)
+                .filter(|token| self.map_state.map.read().unwrap().get(token.as_str()).is_some())
+                .collect::<Vec<_>>();
+        
+                let id_tokens = command.iter().skip(2 + key_tokens.len()).collect::<Vec<_>>();
+                let mut encoded_array = String::new();
+                let mut key_entries = Vec::new();
+        
+                for (key, id) in key_tokens.iter().zip(id_tokens){
+                    let values = self.map_state.map.read().unwrap()
+                    .get(*key)
+                    .unwrap() // no case for nil
+                    .get_stream_range(id, None);
+                    if !values.is_empty() { key_entries.push(json!([key, values]));}
+                }
+        
+                if !key_entries.is_empty() {
+                    encode_resp_value_array(&mut encoded_array, &key_entries)
+                } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
+            },
 
-        let id_tokens = command.iter().skip(2 + key_tokens.len()).collect::<Vec<_>>();
-        let mut encoded_array = String::new();
-        let mut key_entries = Vec::new();
+            "block" => {
+                let timeout = &command[2].parse::<u64>().unwrap();
+                let key = &command[4];
 
-        for (key, id) in key_tokens.iter().zip(id_tokens){
-            let values = self.map.read().unwrap()
-            .get(*key)
-            .unwrap() // no case for nil
-            .get_stream_range(id, None);
-            if !values.is_empty() { key_entries.push(json!([key, values]));}
+                let mut receiver = {
+                    let mut waiters_guard = self.map_state.waiters.lock().unwrap();
+                    let queue = waiters_guard.entry(key.to_owned()).or_insert(VecDeque::new());
+                    if queue.len() > 10000{
+                        return format!("ERR_TOO_MANY_XREAD_WAITERS_FOR_THE_KEY")
+                    }
+
+                    let (sender, receiver) = mpsc::channel(1);
+                    queue.push_back(sender);
+                    receiver
+                };
+
+                tokio::select! {
+                    result = receiver.recv() => {
+                        if let Some((key, redis_val)) = result {
+                            if let Some(value_array) = redis_val.get_blocked_result(){
+                                let mut encoded_array = String::new();
+                                return encode_resp_value_array(&mut encoded_array, &vec![json!([key, value_array])])
+                            }
+                            format!("*-1\r\n")
+                        } else {format!("*-1\r\n")}
+                    },
+
+                    _ = sleep(Duration::from_millis(*timeout)) => {
+                        format!("*-1\r\n")
+                    },
+                }
+            },
+
+            _ => format!("ERR_NOT_SUPPORTED")
         }
 
-        if !key_entries.is_empty() {
-            encode_resp_value_array(&mut encoded_array, &key_entries)
-        } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
     } 
 }

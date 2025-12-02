@@ -1,5 +1,5 @@
 use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::Notify , net::TcpListener};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
 use crate::{protocol::{RedisState, RedisValue}, utils::parse_resp};
 
 mod protocol;
@@ -48,23 +48,23 @@ async fn main() {
                                             match str.to_uppercase().as_str() {
                                                 "PX" => {
                                                     let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
-                                                    local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
+                                                    local_state.map_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
                                                 }
                                                 "EX" => {
                                                     let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
-                                                    local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
+                                                    local_state.map_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
                                                 }
                                                 _ => (),
                                             }
                                         }
                                         None => {
-                                            local_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::String(commands[2].clone()));
+                                            local_state.map_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::String(commands[2].clone()));
                                         }
                                     }
                                     stream.write_all(b"+OK\r\n").await.unwrap()
                                 }
                                 "GET" => {
-                                    let value = local_state.map.read().unwrap().get(&commands[1]).cloned();
+                                    let value = local_state.map_state.map.read().unwrap().get(&commands[1]).cloned();
                                     if let Some(value) = value {
                                         match value {
                                             RedisValue::StringWithTimeout((value, timeout)) => {
@@ -120,7 +120,7 @@ async fn main() {
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "XREAD" => {
-                                    let response = local_state.xread(&commands);
+                                    let response = local_state.xread(&commands).await;
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 _ => (),

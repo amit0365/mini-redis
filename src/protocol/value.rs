@@ -2,26 +2,37 @@ use std::{collections::{BTreeMap, HashMap}, time::{Instant, SystemTime, UNIX_EPO
 
 use serde_json::{Value, json};
 
+use crate::utils::encode_resp_array;
+
 #[derive(Clone)]
 pub enum RedisValue{
     String(String),
     StringWithTimeout((String, Instant)), 
-    Stream(StreamValue<String, String>)
+    Stream(StreamValue<String, String>),
 }
 
 #[derive(Clone)]
 pub struct StreamValue<K, V>{
     last_id: K,
     time_map: HashMap<u128, u64>, //time -> last seqquence number
-    map: BTreeMap<K, (u128, u64, Vec<(K, V)>)>
+    map: BTreeMap<K, (u128, u64, Vec<(K, V)>)>,
+    waiters_value: (K, Vec<(K, V)>)
 }
 
 impl StreamValue<String, String>{
     pub fn new() -> Self {
-        StreamValue { last_id: String::new(), time_map: HashMap::new(), map: BTreeMap::new() }
+        StreamValue { last_id: String::new(), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (String::new(), Vec::new())}
     }
 
-    pub fn insert(&mut self, id: &String, id_time: u128, id_seq: u64, pairs_flattened: Vec<String>) -> Option<(u128, u64, Vec<(String, String)>)> {
+    pub fn new_blocked(id: &String, pairs_flattened: &Vec<String>) -> Self {
+        let pairs_grouped = pairs_flattened
+        .chunks_exact(2)
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect::<Vec<(String, String)>>();
+        StreamValue { last_id: String::new(), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (id.clone(), pairs_grouped)}
+    }
+
+    pub fn insert(&mut self, id: &String, id_time: u128, id_seq: u64, pairs_flattened: &Vec<String>) -> Option<(u128, u64, Vec<(String, String)>)> {
         let pairs_grouped = pairs_flattened
         .chunks_exact(2)
         .map(|pair| (pair[0].clone(), pair[1].clone()))
@@ -36,7 +47,19 @@ impl RedisValue{
         match self{
             RedisValue::String(s) => Some(s),
             RedisValue::StringWithTimeout((s, _)) => Some(s),
-            RedisValue::Stream(_) => None
+            RedisValue::Stream(_) => None,
+        }
+    }
+
+    pub fn get_blocked_result(&self) -> Option<Vec<Value>> {
+        match self{
+            RedisValue::String(s) => None,
+            RedisValue::StringWithTimeout((s, _)) => None,
+            RedisValue::Stream(val) => {
+                let (id, pairs) = &val.waiters_value;
+                let pairs_flattened = pairs.iter().flat_map(|(id, pair)| [id, pair]).collect::<Vec<_>>();
+                Some(vec![json!([id, pairs_flattened])])
+            },
         }
     }
 
@@ -107,7 +130,7 @@ impl RedisValue{
         }
     }
 
-    pub fn update_stream(&mut self, id: &String, pairs_flattened: Vec<String>) -> String{
+    pub fn update_stream(&mut self, id: &String, pairs_flattened: &Vec<String>) -> String{
         match self{
             RedisValue::String(_) => format!("not supported"),
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
