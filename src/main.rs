@@ -47,29 +47,6 @@ impl RedisValue{
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
-                if start_id.as_str() == "-"{
-                    if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
-                        if stop_id_pre.is_empty() || stop_id_post.is_empty(){
-                            return format!("-ERR The ID");
-                        }
-                        
-                        let time_range = 0..=stop_id_pre.parse::<u128>().unwrap();
-                        let sequence_range = 0..=stop_id_post.parse::<u64>().unwrap();
-                        for time in time_range{
-                            for sequence in sequence_range.clone(){
-                                let id = time.to_string() + "-" + &sequence.to_string();
-                                if let Some(entry) = stream.map.get(&id){
-                                    let flattened = entry.iter()
-                                    .flat_map(|(k, v)| [k.clone(), v.clone()])
-                                    .collect::<Vec<String>>();
-                                    entries.push(json!([id, flattened]));
-                                }
-                            } 
-                        }
-
-                    }
-                }
-
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
                     if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
                         if stop_id_pre.is_empty() || stop_id_post.is_empty(){
