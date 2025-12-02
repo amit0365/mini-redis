@@ -43,14 +43,13 @@ impl RedisValue{
 
     fn get_stream_range(&self, start_id: &String, stop_id: Option<&String>) -> Vec<Value>{
         match self{
-            RedisValue::String(_) => Vec::new(), //format!("not supported"),
-            RedisValue::StringWithTimeout((_, _)) => Vec::new(), //format!("not supported"),
+            RedisValue::String(_) => Vec::new(), // fix error handling,
+            RedisValue::StringWithTimeout((_, _)) => Vec::new(), // fix error handling,
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
                     let stop_time: Option<u128>;
                     let stop_seq: Option<u64>;
-                    println!("start");
 
                     match stop_id{
                         Some(stop_id ) => {
@@ -66,14 +65,13 @@ impl RedisValue{
                                             stop_seq = Some(stop_id_post.parse::<u64>().unwrap());
                                         },
 
-                                        None => return Vec::new() //format!("not supported"),
+                                        None => return Vec::new() // fix error handling,
                                     } 
                                 },
                             }
                         },
 
                         None => {
-                            println!("xread");
                             stop_time = None;
                             stop_seq = None;
                         },
@@ -103,10 +101,6 @@ impl RedisValue{
 
                         if result { entries.push(json!([e.0, flattened]));}
                     });
-
-                    // if  stop_time.is_none() && stop_seq.is_none() && stop_id.is_none(){ //xread
-                    //     return encode_resp_value_array(&mut encoded_array, &vec![json!([key, entries])])
-                    // }
                 }
 
                 entries
@@ -433,7 +427,9 @@ impl RedisState<String, RedisValue>{
         .get(&command[1])
         .unwrap() // no case for nil
         .get_stream_range(&command[2], Some(&command[3]));
-        encode_resp_value_array(&mut encoded_array, &values)
+        if !values.is_empty() {
+            encode_resp_value_array(&mut encoded_array, &values)
+        } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
     } 
 
     fn xread(&self, command: &Vec<String>) -> String {
@@ -450,10 +446,12 @@ impl RedisState<String, RedisValue>{
             .get(*key)
             .unwrap() // no case for nil
             .get_stream_range(id, None);
-            key_entries.push(json!([key, values]));
+            if !values.is_empty() { key_entries.push(json!([key, values]));}
         }
 
-        encode_resp_value_array(&mut encoded_array, &key_entries)
+        if !key_entries.is_empty() {
+            encode_resp_value_array(&mut encoded_array, &key_entries)
+        } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
     } 
 }
 
