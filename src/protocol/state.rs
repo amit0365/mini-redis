@@ -14,7 +14,6 @@ pub struct RedisState<K, RedisValue> {
 pub struct ListState<K, RedisValue>{
     list: Arc<Mutex<HashMap<K, VecDeque<RedisValue>>>>, // use rwlock instead
     waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,    
-
 }
 
 impl<K> ListState<K, RedisValue>{
@@ -325,7 +324,7 @@ impl RedisState<String, RedisValue>{
                                     let mut encoded_array = String::new();
                                     return encode_resp_value_array(&mut encoded_array, &vec![json!([key, value_array])])
                                 }
-                                format!("*-1\r\n")
+                                format!("*-1\r\n")  
                             } else {format!("*-1\r\n")}
                         },
     
@@ -338,6 +337,10 @@ impl RedisState<String, RedisValue>{
 
             _ => format!("ERR_NOT_SUPPORTED")
         }
+    }
 
-    } 
+    fn subscribe(command: &Vec<String>) -> String{
+        encode_resp_array(&vec![command[0].to_owned(), command[1].to_owned(), 1.to_string()])
+    }
+
 }
