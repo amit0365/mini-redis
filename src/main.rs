@@ -67,6 +67,7 @@ impl RedisValue{
                         start_time = 0;
                         start_seq = 0;
                     } else {
+                        println!("start_noraml");
                         start_time = start_id_pre.parse::<u128>().unwrap();
                         start_seq = start_id_post.parse::<u64>().unwrap();
                     }
