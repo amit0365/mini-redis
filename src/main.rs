@@ -76,10 +76,11 @@ impl RedisValue{
                         if result {
                             let id = time.to_string() + "-" + &seq.to_string();
                             let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+                            println!("true");
                             entries.push(json!([id, flattened]));
                         } 
                     });
-                    
+
                     println!("{}", entries.len());
                 }
 
