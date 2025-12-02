@@ -49,41 +49,40 @@ impl RedisValue{
                 let mut entries = Vec::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
                     println!("start");
-                    if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
-                        println!("stop");
-                        let start_time: u128;
-                        let start_seq: u64;
-                        if start_id.as_str() == "-"{
-                            start_time = 0;
-                            start_seq = 0;
-                        } else {
-                            start_time = start_id_pre.parse::<u128>().unwrap();
-                            start_seq = start_id_post.parse::<u64>().unwrap();
-                        }
-
-                        let stop_time: u128;
-                        let stop_seq: u64;
-                        if stop_id.as_str() == "+"{
-                            println!("plus");
-                            stop_time = u128::MAX;
-                            stop_seq = u64::MAX;
-                        } else {
+                    let stop_time: u128;
+                    let stop_seq: u64;
+                    if stop_id.as_str() == "+"{
+                        println!("plus");
+                        stop_time = u128::MAX;
+                        stop_seq = u64::MAX;
+                    } else {
+                        if let Some((stop_id_pre, stop_id_post)) = stop_id.split_once("-"){
                             stop_time = stop_id_pre.parse::<u128>().unwrap();
                             stop_seq = stop_id_pre.parse::<u64>().unwrap();
-                        }
-
-                        let _ = stream.map.iter().filter(|e| {
-                            let (time, seq, pairs) = e.1;
-                            let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
-                            if result {
-                                let id = time.to_string() + "-" + &seq.to_string();
-                                let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
-                                entries.push(json!([id, flattened]));
-                            }
-
-                            result   
-                        });
+                        } else { return format!("not supported")} 
                     }
+
+                    let start_time: u128;
+                    let start_seq: u64;
+                    if start_id.as_str() == "-"{
+                        start_time = 0;
+                        start_seq = 0;
+                    } else {
+                        start_time = start_id_pre.parse::<u128>().unwrap();
+                        start_seq = start_id_post.parse::<u64>().unwrap();
+                    }
+
+                    let _ = stream.map.iter().filter(|e| {
+                        let (time, seq, pairs) = e.1;
+                        let result = *time >= start_time && *time <= stop_time && *seq >= start_seq && *seq <= stop_seq;
+                        if result {
+                            let id = time.to_string() + "-" + &seq.to_string();
+                            let flattened = pairs.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect::<Vec<String>>();
+                            entries.push(json!([id, flattened]));
+                        }
+                    
+                       result   
+                    });
                 }
 
                 let mut encoded_array = String::new();
