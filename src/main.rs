@@ -84,7 +84,7 @@ async fn main() {
                                     }
                                 }
                                 "RPUSH" => {
-                                    let response = format!(":{}\r\n", local_state.rpush(&commands));
+                                    let response = format!(":{}\r\n", local_state.rpush(&commands).await);
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "LPUSH" => {
