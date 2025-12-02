@@ -124,7 +124,7 @@ async fn main() {
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "SUBSCRIBE" => {
-                                    let response = local_state.subscribe(&commands).await;
+                                    let response = local_state.subscribe(&commands);
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 _ => (),
