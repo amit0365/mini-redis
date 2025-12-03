@@ -192,6 +192,7 @@ async fn main() {
                                             }
                                         }
                                     }
+
                                     Err(_) => break,
                                 }
                             }
@@ -209,7 +210,7 @@ async fn main() {
                                             match client_state.queued_commands.len(){
                                                 0 => stream.write_all(b"*0\r\n").await.unwrap(),
                                                 _ => {
-                                                    while let Some(queued_command) = client_state.queued_commands.pop(){
+                                                    while let Some(queued_command) = client_state.queued_commands.pop_front(){
                                                         execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await
                                                     }
                                                 },
@@ -218,7 +219,7 @@ async fn main() {
                                             client_state.multi_queue_mode = false;
                                         },
                                         _ => {
-                                            client_state.queued_commands.push(commands);
+                                            client_state.queued_commands.push_back(commands);
                                             stream.write_all(b"+QUEUED\r\n").await.unwrap()
                                         },
                                     }

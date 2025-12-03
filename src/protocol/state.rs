@@ -31,7 +31,7 @@ pub struct ClientState<K, V>{
     subscriptions: (usize, HashSet<V>),
     pub receiver: Option<Receiver<(K, Vec<String>)>>,
     pub sender: Option<Sender<(K, Vec<String>)>>,
-    pub queued_commands: Vec<Vec<String>> 
+    pub queued_commands: VecDeque<Vec<String>> 
 }
 
 impl ClientState<String, String>{
@@ -39,7 +39,7 @@ impl ClientState<String, String>{
         let subscribe_mode = false;
         let multi_queue_mode = false;
         let subscriptions = (0, HashSet::new());
-        ClientState { subscribe_mode, multi_queue_mode, subscriptions, receiver: None, sender: None , queued_commands: Vec::new() }
+        ClientState { subscribe_mode, multi_queue_mode, subscriptions, receiver: None, sender: None , queued_commands: VecDeque::new() }
     }
 }
 
