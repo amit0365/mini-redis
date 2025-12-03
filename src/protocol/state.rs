@@ -378,7 +378,7 @@ impl RedisState<String, RedisValue>{
                 *n += 1;
                 format!(":{}\r\n", n)
             },
-            _ => format!("ERR_NOT_SUPPORTED"),
+            _ => format!("-ERR value is not an integer or out of range\r\n"),
         }
     } 
 
