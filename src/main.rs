@@ -206,16 +206,23 @@ async fn main() {
                                 if client_state.multi_queue_mode{
                                     match commands[1].as_str(){
                                         "EXEC" => {
-                                            while let Some(queued_command) = client_state.queued_commands.pop(){
-                                                execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await
+                                            match client_state.queued_commands.len(){
+                                                0 => stream.write_all(b"*0\r\n").await.unwrap(),
+                                                _ => {
+                                                    while let Some(queued_command) = client_state.queued_commands.pop(){
+                                                        execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await
+                                                    }
+                                                },
                                             }
+
+                                            client_state.multi_queue_mode = false;
                                         },
                                         _ => client_state.queued_commands.push(commands),
                                     }
                                     
                                 } else {
                                     match commands[0].as_str(){
-                                        "EXEC" =>  stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
+                                        "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
                                         _ => execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &commands).await
                                     }
                                 }
