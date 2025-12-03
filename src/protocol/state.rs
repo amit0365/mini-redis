@@ -1,5 +1,5 @@
-use std::{collections::{HashMap, VecDeque}, sync::{Arc, Mutex, RwLock}, time::Duration};
-use tokio::{sync::mpsc::{self, Sender, error::TrySendError}, time::sleep};
+use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::Duration};
+use tokio::{net::TcpStream, sync::mpsc::{self, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
 use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
@@ -8,6 +8,19 @@ use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, enc
 pub struct RedisState<K, RedisValue> {
     pub map_state: MapState<K, RedisValue>,
     pub list_state: ListState<K, RedisValue>,
+}
+
+#[derive(Clone)]
+pub struct ClientSubs<K, V>{
+    subscriptions: (usize, HashSet<V>), 
+    _phantom: PhantomData<K>, 
+}
+
+impl ClientSubs<String, String>{
+    pub fn new() -> Self{
+        let subscriptions = (0, HashSet::new());
+        ClientSubs { subscriptions, _phantom: PhantomData }
+    }
 }
 
 #[derive(Clone)]
@@ -222,7 +235,6 @@ impl RedisState<String, RedisValue>{
                     RedisValue::String(_) => "string".to_string(),
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
-                    RedisValue::Stream(_) => "stream".to_string(),
                 }
             },
             None => "none".to_string()
@@ -340,8 +352,16 @@ impl RedisState<String, RedisValue>{
         }
     }
 
-    pub fn subscribe(&self, command: &Vec<String>) -> String{
-        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:1\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1])
+    pub fn subscribe(&self, client_subs: &mut ClientSubs<String, String>, command: &Vec<String>) -> String{
+        let subs_count = if client_subs.subscriptions.1.contains(&command[1]){
+            client_subs.subscriptions.0
+        } else {
+            client_subs.subscriptions.1.insert(command[1].to_owned());
+            client_subs.subscriptions.0 += 1;
+            client_subs.subscriptions.0
+        };
+
+        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1], subs_count)
     }
 
 }

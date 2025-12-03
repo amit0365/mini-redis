@@ -1,6 +1,6 @@
 use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
-use crate::{protocol::{RedisState, RedisValue}, utils::parse_resp};
+use crate::{protocol::{RedisState, RedisValue, ClientSubs}, utils::parse_resp};
 
 mod protocol;
 mod utils;
@@ -29,6 +29,8 @@ async fn main() {
 
         let cc = connection_count.clone();
         tokio::spawn(async move {
+            let mut client_subs = ClientSubs::new();
+            
             loop {
                 match stream.read(&mut buf).await {
                     Ok(0) => break,
@@ -124,7 +126,7 @@ async fn main() {
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "SUBSCRIBE" => {
-                                    let response = local_state.subscribe(&commands);
+                                    let response = local_state.subscribe(&mut client_subs, &commands);
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 _ => (),
