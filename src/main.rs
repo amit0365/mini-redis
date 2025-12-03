@@ -216,7 +216,7 @@ async fn main() {
                                         "DISCARD" => {
                                             client_state.queued_commands.clear();
                                             client_state.multi_queue_mode = false;
-                                            stream.write_all(b"OK\r\n").await.unwrap()
+                                            stream.write_all(b"+OK\r\n").await.unwrap()
                                         }
                                         _ => {
                                             client_state.queued_commands.push_back(commands);
