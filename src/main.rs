@@ -204,12 +204,12 @@ async fn main() {
                                                     while let Some(queued_command) = client_state.queued_commands.pop_front(){
                                                         let response = execute_commands_normal(&mut stream, false, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await;
                                                         responses.push(response);
+                                                        let responses_array = format!("*{}\r\n{}", responses.len(), responses.join(""));
+                                                        stream.write_all(responses_array.as_bytes()).await.unwrap();
                                                     }
                                                 },
                                             }
 
-                                            let responses_array = format!("*{}\r\n{}", responses.len(), responses.join(""));
-                                            stream.write_all(responses_array.as_bytes()).await.unwrap();
                                             client_state.multi_queue_mode = false;
                                         },
                                         _ => {
