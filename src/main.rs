@@ -183,7 +183,7 @@ async fn main() {
                                             stream.write_all(response.as_bytes()).await.unwrap()
                                         }
                                         "INCR" => {
-                                            let response = local_state.publish(&commands);
+                                            let response = local_state.incr(&commands);
                                             stream.write_all(response.as_bytes()).await.unwrap()
                                         }
                                         _ => (),
