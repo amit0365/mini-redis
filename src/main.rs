@@ -1,6 +1,6 @@
 use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
-use crate::{protocol::{RedisState, RedisValue, ClientState}, utils::parse_resp};
+use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
 
 mod protocol;
 mod utils;
@@ -43,6 +43,10 @@ async fn main() {
                                         let response = local_state.subscribe(&mut client_state, &commands);
                                         stream.write_all(response.as_bytes()).await.unwrap()
                                     }
+                                    "PING" => {
+                                        let response = encode_resp_array(&vec!["pong".to_string(), "".to_string()]);
+                                        stream.write_all(response.as_bytes()).await.unwrap()
+                                    },
                                     "UNSUBSCRIBE" => {
                                         let response = local_state.subscribe(&mut client_state, &commands);
                                         stream.write_all(response.as_bytes()).await.unwrap()
