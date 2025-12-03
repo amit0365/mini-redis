@@ -204,7 +204,7 @@ async fn main() {
                             let parsed_commands = parse_resp(&buf[..n]);
                             if let Some(commands) = parsed_commands {
                                 if client_state.multi_queue_mode{
-                                    match commands[1].as_str(){
+                                    match commands[0].as_str(){
                                         "EXEC" => {
                                             match client_state.queued_commands.len(){
                                                 0 => stream.write_all(b"*0\r\n").await.unwrap(),
