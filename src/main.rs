@@ -4,13 +4,12 @@ use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp
 mod protocol;
 mod utils;
 
-async fn execute_commands_normal(stream: &mut TcpStream, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>){
-    match commands[0].to_uppercase().as_str() {
-        "PING" => stream.write_all(b"+PONG\r\n").await.unwrap(),
+async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>) -> String{
+    let response = match commands[0].to_uppercase().as_str() {
+        "PING" => format!("+PONG\r\n"),
         "ECHO" => {
             let message = &commands[1]; //multiple arg will fail like hello world. check to use .join("")
-            let response = format!("${}\r\n{}\r\n", message.len(), message);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            format!("${}\r\n{}\r\n", message.len(), message)
         }
         "SET" => {
             match commands.iter().skip(3).next() {
@@ -36,7 +35,8 @@ async fn execute_commands_normal(stream: &mut TcpStream, local_state: &mut Redis
                     local_state.map_state.map.write().unwrap().insert(commands[1].to_owned(), redis_val);
                 }
             }
-            stream.write_all(b"+OK\r\n").await.unwrap()
+
+            format!("+OK\r\n")
         }
         "GET" => {
             let value = local_state.map_state.map.read().unwrap().get(&commands[1]).cloned();
@@ -44,83 +44,73 @@ async fn execute_commands_normal(stream: &mut TcpStream, local_state: &mut Redis
                 match value {
                     RedisValue::StringWithTimeout((value, timeout)) => {
                         if Instant::now() < timeout {
-                            let response = format!("${}\r\n{}\r\n", value.len(), value);
-                            stream.write_all(response.as_bytes()).await.unwrap()
+                            format!("${}\r\n{}\r\n", value.len(), value)
                         } else {
-                            stream.write_all(b"$-1\r\n").await.unwrap()
+                            format!("$-1\r\n")
                         }
                     }
                     RedisValue::String(val) => {
-                        let response = format!("${}\r\n{}\r\n", val.len(), val);
-                        stream.write_all(response.as_bytes()).await.unwrap()
+                        format!("${}\r\n{}\r\n", val.len(), val)
                     }
                     RedisValue::Number(val) => {
-                        let response = format!("${}\r\n{}\r\n", val.to_string().len(), val);
-                        stream.write_all(response.as_bytes()).await.unwrap()
+                        format!("${}\r\n{}\r\n", val.to_string().len(), val)
                     }
-                    _ => (), // fix error handling
+                    _ => format!("$-1\r\n") // fix error handling
                 }
-            } else { stream.write_all(b"$-1\r\n").await.unwrap()}
+            } else { format!("$-1\r\n")}
         }
         "RPUSH" => {
-            let response = format!(":{}\r\n", local_state.rpush(&commands));
-            stream.write_all(response.as_bytes()).await.unwrap()
+            format!(":{}\r\n", local_state.rpush(&commands))
         }
         "LPUSH" => {
-            let response = format!(":{}\r\n", local_state.lpush(&commands));
-            stream.write_all(response.as_bytes()).await.unwrap()
+            format!(":{}\r\n", local_state.lpush(&commands))
         }
         "LLEN" => {
-            let response = format!(":{}\r\n", local_state.llen(&commands));
-            stream.write_all(response.as_bytes()).await.unwrap()
+            format!(":{}\r\n", local_state.llen(&commands))
         }
         "LPOP" => {
-            let response = local_state.lpop(&commands);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.lpop(&commands)
         }
         "BLPOP" => {
-            let response = local_state.blpop(&commands).await;
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.blpop(&commands).await
         }
         "LRANGE" => {
-            let response = local_state.lrange(&commands[1], &commands[2], &commands[3]);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.lrange(&commands[1], &commands[2], &commands[3])
         }
         "TYPE" => {
-            let response = format!("+{}\r\n", local_state.type_command(&commands));
-            stream.write_all(response.as_bytes()).await.unwrap()
+            format!("+{}\r\n", local_state.type_command(&commands))
         }
         "XADD" => {
-            let response = local_state.xadd(&commands);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.xadd(&commands)
         }
         "XRANGE" => {
-            let response = local_state.xrange(&commands);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.xrange(&commands)
         }
         "XREAD" => {
-            let response = local_state.xread(&commands).await;
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.xread(&commands).await
         }
         "SUBSCRIBE" => {
             let count_response = local_state.subscribe(client_state, &client_add,  &commands);
             local_state.handle_subscriber(client_state, &commands).await;
-            stream.write_all(count_response.as_bytes()).await.unwrap()
+            count_response
         }
         "PUBLISH" => {
-            let response = local_state.publish(&commands);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.publish(&commands)
         }
         "INCR" => {
-            let response = local_state.incr(&commands);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.incr(&commands)
         }
         "MULTI" => {
-            let response = local_state.multi(client_state, &commands);
-            stream.write_all(response.as_bytes()).await.unwrap()
+            local_state.multi(client_state, &commands)
         }
-        _ => (),
+        _ => format!("$-1\r\n"), //todo fix
+    };
+
+    if write_to_stream{
+        stream.write_all(response.as_bytes()).await.unwrap();
     }
+
+    response
 }
 
 #[tokio::main]
@@ -207,15 +197,19 @@ async fn main() {
                                 if client_state.multi_queue_mode{
                                     match commands[0].as_str(){
                                         "EXEC" => {
+                                            let mut responses = Vec::new();
                                             match client_state.queued_commands.len(){
                                                 0 => stream.write_all(b"*0\r\n").await.unwrap(),
                                                 _ => {
                                                     while let Some(queued_command) = client_state.queued_commands.pop_front(){
-                                                        execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await
+                                                        let response = execute_commands_normal(&mut stream, false, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await;
+                                                        responses.push(response);
                                                     }
                                                 },
                                             }
 
+                                            let responses_array = format!("*{}\r\n{}", responses.len(), responses.join(""));
+                                            stream.write_all(responses_array.as_bytes()).await.unwrap();
                                             client_state.multi_queue_mode = false;
                                         },
                                         _ => {
@@ -227,7 +221,9 @@ async fn main() {
                                 } else {
                                     match commands[0].as_str(){
                                         "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
-                                        _ => execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &commands).await
+                                        _ => {
+                                            let _ = execute_commands_normal(&mut stream, true, &mut local_state, &mut client_state, addr.to_string(), &commands).await;
+                                        }
                                     }
                                 }
                             }
