@@ -134,6 +134,10 @@ async fn main() {
                                                         let response = format!("${}\r\n{}\r\n", val.len(), val);
                                                         stream.write_all(response.as_bytes()).await.unwrap()
                                                     }
+                                                    RedisValue::Number(val) => {
+                                                        let response = format!(":{}\r\n", val);
+                                                        stream.write_all(response.as_bytes()).await.unwrap()
+                                                    }
                                                     _ => (), // fix error handling
                                                 }
                                             }
