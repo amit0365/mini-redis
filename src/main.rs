@@ -205,7 +205,7 @@ async fn main() {
                                                         let response = execute_commands_normal(&mut stream, false, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await;
                                                         responses.push(response);
                                                     }
-                                                    
+
                                                     let responses_array = format!("*{}\r\n{}", responses.len(), responses.join(""));
                                                     stream.write_all(responses_array.as_bytes()).await.unwrap();
                                                 },
@@ -213,6 +213,10 @@ async fn main() {
 
                                             client_state.multi_queue_mode = false;
                                         },
+                                        "DISCARD" => {
+                                            client_state.queued_commands.clear();
+                                            stream.write_all(b"OK\r\n").await.unwrap()
+                                        }
                                         _ => {
                                             client_state.queued_commands.push_back(commands);
                                             stream.write_all(b"+QUEUED\r\n").await.unwrap()
@@ -222,6 +226,7 @@ async fn main() {
                                 } else {
                                     match commands[0].as_str(){
                                         "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
+                                        "DISCARD" => stream.write_all(b"-ERR DISCARD without MULTI\r\n").await.unwrap(),
                                         _ => {
                                             let _ = execute_commands_normal(&mut stream, true, &mut local_state, &mut client_state, addr.to_string(), &commands).await;
                                         }
