@@ -1,4 +1,4 @@
-use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
+use std::{env, sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
 mod protocol;
@@ -118,7 +118,8 @@ async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
         
-    let listener = Arc::new(TcpListener::bind("127.0.0.1:6379").await.unwrap());
+    let port = env::args().nth(2).unwrap_or_else(|| "6379".to_string());
+    let listener = Arc::new(TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap());
     let connection_count = Arc::new(AtomicUsize::new(0));
     let state = RedisState::new();
     
