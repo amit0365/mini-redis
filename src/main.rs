@@ -108,7 +108,12 @@ async fn main() {
                                                     }
                                                 }
                                                 None => {
-                                                    local_state.map_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::String(commands[2].clone()));
+                                                    let redis_val = match commands[2].parse::<u64>(){
+                                                        Ok(num) => RedisValue::Number(num),
+                                                        Err(_) => RedisValue::String(commands[2].to_owned()),
+                                                    };
+
+                                                    local_state.map_state.map.write().unwrap().insert(commands[1].to_owned(), redis_val);
                                                 }
                                             }
                                             stream.write_all(b"+OK\r\n").await.unwrap()
