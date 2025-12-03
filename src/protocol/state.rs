@@ -11,15 +11,17 @@ pub struct RedisState<K, RedisValue> {
 }
 
 #[derive(Clone)]
-pub struct ClientSubs<K, V>{
+pub struct ClientState<K, V>{
+    pub subscribe_mode: bool,
     subscriptions: (usize, HashSet<V>), 
     _phantom: PhantomData<K>, 
 }
 
-impl ClientSubs<String, String>{
+impl ClientState<String, String>{
     pub fn new() -> Self{
+        let subscribe_mode = false;
         let subscriptions = (0, HashSet::new());
-        ClientSubs { subscriptions, _phantom: PhantomData }
+        ClientState { subscribe_mode, subscriptions, _phantom: PhantomData }
     }
 }
 
@@ -352,7 +354,8 @@ impl RedisState<String, RedisValue>{
         }
     }
 
-    pub fn subscribe(&self, client_subs: &mut ClientSubs<String, String>, command: &Vec<String>) -> String{
+    pub fn subscribe(&self, client_subs: &mut ClientState<String, String>, command: &Vec<String>) -> String{
+        client_subs.subscribe_mode = true;
         let subs_count = if client_subs.subscriptions.1.contains(&command[1]){
             client_subs.subscriptions.0
         } else {
