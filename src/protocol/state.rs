@@ -27,16 +27,19 @@ impl<K> ChannelState<K>{
 
 pub struct ClientState<K, V>{
     pub subscribe_mode: bool,
+    pub multi_queue_mode: bool,
     subscriptions: (usize, HashSet<V>),
     pub receiver: Option<Receiver<(K, Vec<String>)>>,
-    pub sender: Option<Sender<(K, Vec<String>)>>
+    pub sender: Option<Sender<(K, Vec<String>)>>,
+    pub queued_commands: Vec<Vec<String>> 
 }
 
 impl ClientState<String, String>{
     pub fn new() -> Self{
         let subscribe_mode = false;
+        let multi_queue_mode = false;
         let subscriptions = (0, HashSet::new());
-        ClientState { subscribe_mode, subscriptions, receiver: None, sender: None }
+        ClientState { subscribe_mode, multi_queue_mode, subscriptions, receiver: None, sender: None , queued_commands: Vec::new() }
     }
 }
 
@@ -382,7 +385,8 @@ impl RedisState<String, RedisValue>{
         }
     } 
 
-    pub fn multi(&self, command: &Vec<String>) -> String {
+    pub fn multi(&self, client_state: &mut ClientState<String, String>, command: &Vec<String>) -> String {
+        client_state.multi_queue_mode = true;
         format!("+OK\r\n")
     } 
 
