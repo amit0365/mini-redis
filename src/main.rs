@@ -195,6 +195,10 @@ async fn main() {
                                             let response = local_state.incr(&commands);
                                             stream.write_all(response.as_bytes()).await.unwrap()
                                         }
+                                        "MULTI" => {
+                                            let response = local_state.incr(&commands);
+                                            stream.write_all(response.as_bytes()).await.unwrap()
+                                        }
                                         _ => (),
                                     }
                                 }

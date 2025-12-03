@@ -382,6 +382,10 @@ impl RedisState<String, RedisValue>{
         }
     } 
 
+    pub fn multi(&self, command: &Vec<String>) -> String {
+        format!("+OK\r\n")
+    } 
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
         client_state.subscribe_mode = true;
         let subs_count = if client_state.subscriptions.1.contains(&command[1]){
