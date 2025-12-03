@@ -1,17 +1,15 @@
 use std::{collections::{BTreeMap, HashMap}, time::{Instant, SystemTime, UNIX_EPOCH}};
-
+use serde::Serialize;
 use serde_json::{Value, json};
-
-use crate::utils::encode_resp_array;
 
 #[derive(Clone)]
 pub enum RedisValue{
     String(String),
-    StringWithTimeout((String, Instant)), 
+    StringWithTimeout((String, Instant)),
     Stream(StreamValue<String, String>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct StreamValue<K, V>{
     last_id: K,
     time_map: HashMap<u128, u64>, //time -> last seqquence number
@@ -53,8 +51,8 @@ impl RedisValue{
 
     pub fn get_blocked_result(&self) -> Option<Vec<Value>> {
         match self{
-            RedisValue::String(s) => None,
-            RedisValue::StringWithTimeout((s, _)) => None,
+            RedisValue::String(_) => None,
+            RedisValue::StringWithTimeout((_, _)) => None,
             RedisValue::Stream(val) => {
                 let (id, pairs) = &val.waiters_value;
                 let pairs_flattened = pairs.iter().flat_map(|(id, pair)| [id, pair]).collect::<Vec<_>>();

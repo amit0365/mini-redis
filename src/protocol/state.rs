@@ -1,5 +1,5 @@
-use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::Duration};
-use tokio::{net::{TcpStream, unix::SocketAddr}, sync::mpsc::{self, Sender, error::TrySendError}, time::sleep};
+use std::{collections::{HashMap, HashSet, VecDeque}, sync::{Arc, Mutex, RwLock}, time::Duration};
+use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
 use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
@@ -14,27 +14,28 @@ pub struct RedisState<K, RedisValue> {
 #[derive(Clone)]
 pub struct ChannelState<K>{
     channels_map: Arc<RwLock<HashMap<K, (usize, HashSet<String>)>>>, 
+    subscribers_queue: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, Vec<String>)>>>>>,
 }
 
 impl<K> ChannelState<K>{
     fn new() -> Self{
         let channels_map = Arc::new(RwLock::new(HashMap::new()));
-        ChannelState { channels_map }
+        let subscribers_queue = Arc::new(Mutex::new(HashMap::new()));
+        ChannelState { channels_map, subscribers_queue }
     }
 }
 
-#[derive(Clone)]
 pub struct ClientState<K, V>{
     pub subscribe_mode: bool,
     subscriptions: (usize, HashSet<V>), 
-    _phantom: PhantomData<K>, 
+    pub receiver: Option<Receiver<(K, Vec<String>)>>
 }
 
 impl ClientState<String, String>{
     pub fn new() -> Self{
         let subscribe_mode = false;
         let subscriptions = (0, HashSet::new());
-        ClientState { subscribe_mode, subscriptions, _phantom: PhantomData }
+        ClientState { subscribe_mode, subscriptions, receiver: None }
     }
 }
 
@@ -367,28 +368,48 @@ impl RedisState<String, RedisValue>{
         }
     }
 
-    pub fn subscribe(&mut self, client_subs: &mut ClientState<String, String>, client: String, command: &Vec<String>) -> String{
-        client_subs.subscribe_mode = true;
-        let subs_count = if client_subs.subscriptions.1.contains(&command[1]){
-            client_subs.subscriptions.0
+    pub fn subscribe(&mut self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
+        client_state.subscribe_mode = true;
+        let subs_count = if client_state.subscriptions.1.contains(&command[1]){
+            client_state.subscriptions.0
         } else {
-            let mut set = HashSet::new();
             let mut channel_guard = self.channels_state.channels_map.write().unwrap();
-            let (count, client_set) = channel_guard.entry(command[1].to_owned()).or_insert((0, set));
+            let (count, client_set) = channel_guard.entry(command[1].to_owned()).or_insert((0, HashSet::new()));
             *count += 1;
-            client_set.insert(client);
-
-            client_subs.subscriptions.1.insert(command[1].to_owned());
-            client_subs.subscriptions.0 += 1;
-            client_subs.subscriptions.0
+            client_set.insert(client.to_owned());
+            
+            client_state.subscriptions.1.insert(command[1].to_owned());
+            client_state.subscriptions.0 += 1;
+            client_state.subscriptions.0
         };
 
         format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1], subs_count)
     }
 
-    pub fn publish(&self, client: String, command: &Vec<String>) -> String{
+    pub async fn handle_subscriber(&self, client_state: &mut ClientState<String, String>, command: &Vec<String>){
+        let mut queue_guard = self.channels_state.subscribers_queue.lock().unwrap();
+        let queue = queue_guard.entry(command[1].to_owned()).or_insert(VecDeque::new());
+
+        let (sender, receiver) = mpsc::channel(1);
+        queue.push_back(sender);
+        client_state.receiver = Some(receiver);
+    }
+
+    pub fn publish(&self, command: &Vec<String>) -> String{
         let subs = self.channels_state.channels_map.read().unwrap().get(&command[1]).unwrap().0;
-        println!("{}", subs);
+        let channel_name = &command[1];
+        let messages = command.iter().skip(2).cloned().collect::<Vec<_>>();
+        let mut subscribers_guard = self.channels_state.subscribers_queue.lock().unwrap();
+        if let Some(queue) = subscribers_guard.get_mut(&command[1]){
+            while let Some(sender) = queue.pop_front(){
+                match sender.try_send((channel_name.to_owned(), messages.clone())){
+                    Ok(_) => continue,
+                    Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
+                    Err(TrySendError::Closed(_)) => continue,
+                }
+            }
+        }
+
         format!(":{}\r\n", subs)
     }
 
