@@ -45,7 +45,6 @@ async fn main() {
                             },
 
                             bytes_read = stream.read(&mut buf) => {
-                                println!("bytes_read {:?}", bytes_read);
                                 match bytes_read {
                                     Ok(0) => break,
                                     Ok(n) => {
@@ -54,9 +53,7 @@ async fn main() {
                                             match commands[0].to_uppercase().as_str() {
                                                 "SUBSCRIBE" => {
                                                     let response = local_state.subscribe(&mut client_state, &addr.to_string(), &commands);
-                                                    println!("got_response");
                                                     local_state.handle_subscriber(&mut client_state, &commands).await;
-                                                    println!("waiting_handle");
                                                     stream.write_all(response.as_bytes()).await.unwrap()
                                                 }
                                                 "PING" => {
