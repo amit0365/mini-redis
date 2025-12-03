@@ -101,7 +101,7 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
             local_state.incr(&commands)
         }
         "MULTI" => {
-            local_state.multi(client_state, &commands)
+            local_state.multi(client_state)
         }
         _ => format!("$-1\r\n"), //todo fix
     };

@@ -385,7 +385,7 @@ impl RedisState<String, RedisValue>{
         }
     } 
 
-    pub fn multi(&self, client_state: &mut ClientState<String, String>, command: &Vec<String>) -> String {
+    pub fn multi(&self, client_state: &mut ClientState<String, String>) -> String {
         client_state.multi_queue_mode = true;
         format!("+OK\r\n")
     } 
