@@ -214,7 +214,7 @@ async fn main() {
                                     }
                                     
                                 } else {
-                                    match commands[1].as_str(){
+                                    match commands[0].as_str(){
                                         "EXEC" =>  stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
                                         _ => execute_commands_normal(&mut stream, &mut local_state, &mut client_state, addr.to_string(), &commands).await
                                     }
