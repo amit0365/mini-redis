@@ -217,7 +217,10 @@ async fn main() {
 
                                             client_state.multi_queue_mode = false;
                                         },
-                                        _ => client_state.queued_commands.push(commands),
+                                        _ => {
+                                            client_state.queued_commands.push(commands);
+                                            stream.write_all(b"+QUEUED\r\n").await.unwrap()
+                                        },
                                     }
                                     
                                 } else {
