@@ -372,15 +372,14 @@ impl RedisState<String, RedisValue>{
 
     pub fn incr(&self, command: &Vec<String>) -> String {
         let mut map_guard = self.map_state.map.write().unwrap();
-        if let Some(val) = map_guard.get_mut(&command[1]){
-            match val{
-                RedisValue::Number(n) => {
-                    *n += 1;
-                    format!(":{}\r\n", n)
-                },
-                _ => format!("ERR_NOT_SUPPORTED"),
-            }
-        } else {format!("ERR_NOT_SUPPORTED")}
+        let val = map_guard.entry(command[1].to_owned()).or_insert(RedisValue::Number(0));
+        match val{
+            RedisValue::Number(n) => {
+                *n += 1;
+                format!(":{}\r\n", n)
+            },
+            _ => format!("ERR_NOT_SUPPORTED"),
+        }
     } 
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
