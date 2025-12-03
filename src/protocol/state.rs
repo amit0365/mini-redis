@@ -27,15 +27,16 @@ impl<K> ChannelState<K>{
 
 pub struct ClientState<K, V>{
     pub subscribe_mode: bool,
-    subscriptions: (usize, HashSet<V>), 
-    pub receiver: Option<Receiver<(K, Vec<String>)>>
+    subscriptions: (usize, HashSet<V>),
+    pub receiver: Option<Receiver<(K, Vec<String>)>>,
+    pub sender: Option<Sender<(K, Vec<String>)>>
 }
 
 impl ClientState<String, String>{
     pub fn new() -> Self{
         let subscribe_mode = false;
         let subscriptions = (0, HashSet::new());
-        ClientState { subscribe_mode, subscriptions, receiver: None }
+        ClientState { subscribe_mode, subscriptions, receiver: None, sender: None }
     }
 }
 
@@ -387,12 +388,17 @@ impl RedisState<String, RedisValue>{
     }
 
     pub async fn handle_subscriber(&self, client_state: &mut ClientState<String, String>, command: &Vec<String>){
-        let mut queue_guard = self.channels_state.subscribers_queue.lock().unwrap();
-        let queue = queue_guard.entry(command[1].to_owned()).or_insert(VecDeque::new());
+        if client_state.receiver.is_none() {
+            let (sender, receiver) = mpsc::channel(1000);
+            client_state.receiver = Some(receiver);
+            client_state.sender = Some(sender);
+        }
 
-        let (sender, receiver) = mpsc::channel(1000);
-        queue.push_back(sender);
-        client_state.receiver = Some(receiver);
+        if let Some(sender) = &client_state.sender {
+            let mut queue_guard = self.channels_state.subscribers_queue.lock().unwrap();
+            let queue = queue_guard.entry(command[1].to_owned()).or_insert(VecDeque::new());
+            queue.push_back(sender.clone());
+        }
     }
 
     pub fn publish(&self, command: &Vec<String>) -> String{
@@ -421,6 +427,7 @@ impl RedisState<String, RedisValue>{
         client_state.subscriptions.1.remove(&command[1]);
         client_state.subscriptions.0 -= 1;
         let subs_count = client_state.subscriptions.0;
+        
         format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1], subs_count)
     }
 

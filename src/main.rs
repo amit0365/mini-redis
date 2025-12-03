@@ -36,11 +36,11 @@ async fn main() {
                         tokio::select! {
                             msg = receiver.recv() => {
                                 if let Some((channel_name, message)) = msg {
-                                        let mut array = vec!["message".to_string(), channel_name];
-                                        array.extend(message);
-                                        
-                                        let response = encode_resp_array(&array);
-                                        stream.write_all(response.as_bytes()).await.unwrap()
+                                    let mut array = vec!["message".to_string(), channel_name];
+                                    array.extend(message);
+                                    
+                                    let response = encode_resp_array(&array);
+                                    stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                             },
 
