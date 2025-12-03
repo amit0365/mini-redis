@@ -103,6 +103,9 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
         "MULTI" => {
             local_state.multi(client_state)
         }
+        "INFO" => {
+            local_state.info(&commands)
+        }
         _ => format!("$-1\r\n"), //todo fix
     };
 
@@ -121,7 +124,8 @@ async fn main() {
     let port = env::args().nth(2).unwrap_or_else(|| "6379".to_string());
     let listener = Arc::new(TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap());
     let connection_count = Arc::new(AtomicUsize::new(0));
-    let state = RedisState::new();
+    let mut state = RedisState::new();
+    state.server_state.map.insert("role".to_string(), RedisValue::String("master".to_string()));
     
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
@@ -229,6 +233,7 @@ async fn main() {
                                     match commands[0].as_str(){
                                         "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
                                         "DISCARD" => stream.write_all(b"-ERR DISCARD without MULTI\r\n").await.unwrap(),
+
                                         _ => {
                                             let _ = execute_commands_normal(&mut stream, true, &mut local_state, &mut client_state, addr.to_string(), &commands).await;
                                         }

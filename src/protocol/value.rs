@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashMap}, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::{BTreeMap, HashMap}, fmt, time::{Instant, SystemTime, UNIX_EPOCH}};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -38,6 +38,17 @@ impl StreamValue<String, String>{
         .collect::<Vec<(String, String)>>();
         
         self.map.insert(id.clone(), (id_time, id_seq, pairs_grouped))
+    }
+}
+
+impl fmt::Display for RedisValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RedisValue::String(s) => write!(f, "{}", s),
+            RedisValue::Number(n) => write!(f, "{}", n),
+            RedisValue::StringWithTimeout((s, _)) => write!(f, "{}", s),
+            RedisValue::Stream(_) => write!(f, "stream"),
+        }
     }
 }
 

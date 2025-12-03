@@ -9,6 +9,7 @@ pub struct RedisState<K, RedisValue> {
     pub channels_state: ChannelState<K>,
     pub map_state: MapState<K, RedisValue>,
     pub list_state: ListState<K, RedisValue>,
+    pub server_state: ServerState<K, RedisValue>
 }
 
 #[derive(Clone)]
@@ -22,6 +23,22 @@ impl<K> ChannelState<K>{
         let channels_map = Arc::new(RwLock::new(HashMap::new()));
         let subscribers = Arc::new(Mutex::new(HashMap::new()));
         ChannelState { channels_map, subscribers }
+    }
+}
+
+#[derive(Clone)]
+pub struct ServerState<K, V>{
+    pub map: HashMap<K, V>
+}
+
+impl ServerState<String, RedisValue>{
+    fn new() ->Self{
+        ServerState { map: HashMap::new() }
+    }
+
+    fn new_with_pairs(pairs: &Vec<(String, String)>) -> Self{
+        let map = pairs.iter().map(|(k, v)| (k.to_owned(), RedisValue::String(v.to_owned()))).collect::<HashMap<_, _>>();
+        ServerState { map }
     }
 }
 
@@ -76,7 +93,8 @@ impl RedisState<String, RedisValue>{
         let channels_state = ChannelState::new();
         let map_state = MapState::new();
         let list_state = ListState::new();
-        RedisState { channels_state, map_state, list_state }
+        let server_state = ServerState::new();
+        RedisState { channels_state, map_state, list_state, server_state }
     }
 
     pub fn rpush(&mut self, command: &Vec<String>) -> String {
@@ -388,6 +406,20 @@ impl RedisState<String, RedisValue>{
     pub fn multi(&self, client_state: &mut ClientState<String, String>) -> String {
         client_state.multi_queue_mode = true;
         format!("+OK\r\n")
+    } 
+
+    pub fn info(&self, command: &Vec<String>) -> String {
+        match command[1].to_uppercase().as_str(){
+            "REPLICATION" => {
+                let mut lines = Vec::new();
+                for (key, value) in self.server_state.map.iter() {
+                    lines.push(format!("{}:{}", key, value));
+                }
+                let content = lines.join("\r\n");
+                format!("${}\r\n{}\r\n", content.len(), content)
+            }
+            _ => format!("NOT_SUPPORTED"),
+        }
     } 
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
