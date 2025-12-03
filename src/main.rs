@@ -1,6 +1,6 @@
 use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
-use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, encode_resp_value_array, parse_resp}};
+use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
 mod protocol;
 mod utils;
 
@@ -35,18 +35,13 @@ async fn main() {
                     if let Some(receiver) = client_state.receiver.as_mut(){
                         tokio::select! {
                             msg = receiver.recv() => {
-                                match msg {
-                                    Some((channel_name, message)) => {
+                                if let Some((channel_name, message)) = msg {
                                         let mut array = vec!["message".to_string(), channel_name];
                                         array.extend(message);
                                         
                                         let response = encode_resp_array(&array);
                                         stream.write_all(response.as_bytes()).await.unwrap()
-
-                                    },
-                                    None => break, //todo fix this
-                                };
-
+                                }
                             },
 
                             bytes_read = stream.read(&mut buf) => {
@@ -69,7 +64,7 @@ async fn main() {
                                                     stream.write_all(response.as_bytes()).await.unwrap()
                                                 },
                                                 "UNSUBSCRIBE" => {
-                                                    let response = local_state.subscribe(&mut client_state, &addr.to_string(), &commands);
+                                                    let response = local_state.unsubscribe(&mut client_state, &addr.to_string(), &commands);
                                                     stream.write_all(response.as_bytes()).await.unwrap()
                                                 }
                         

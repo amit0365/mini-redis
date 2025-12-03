@@ -390,7 +390,7 @@ impl RedisState<String, RedisValue>{
         let mut queue_guard = self.channels_state.subscribers_queue.lock().unwrap();
         let queue = queue_guard.entry(command[1].to_owned()).or_insert(VecDeque::new());
 
-        let (sender, receiver) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::channel(1000);
         queue.push_back(sender);
         client_state.receiver = Some(receiver);
     }
@@ -401,16 +401,27 @@ impl RedisState<String, RedisValue>{
         let messages = command.iter().skip(2).cloned().collect::<Vec<_>>();
         let mut subscribers_guard = self.channels_state.subscribers_queue.lock().unwrap();
         if let Some(queue) = subscribers_guard.get_mut(&command[1]){
-            while let Some(sender) = queue.pop_front(){
+            queue.retain(|sender| 
                 match sender.try_send((channel_name.to_owned(), messages.clone())){
-                    Ok(_) => continue,
-                    Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
-                    Err(TrySendError::Closed(_)) => continue,
-                }
-            }
+                    Ok(_) => true,
+                    Err(TrySendError::Full(_)) => return true,
+                    Err(TrySendError::Closed(_)) => false,
+            })
         }
 
         format!(":{}\r\n", subs)
+    }
+
+    pub fn unsubscribe(&self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
+        let mut channel_guard = self.channels_state.channels_map.write().unwrap();
+        let (count, client_set) = channel_guard.get_mut(&command[1]).unwrap(); //check this
+        *count -= 1;
+        client_set.remove(client);
+        
+        client_state.subscriptions.1.remove(&command[1]);
+        client_state.subscriptions.0 -= 1;
+        let subs_count = client_state.subscriptions.0;
+        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1], subs_count)
     }
 
 }
