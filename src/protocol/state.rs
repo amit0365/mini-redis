@@ -14,14 +14,14 @@ pub struct RedisState<K, RedisValue> {
 #[derive(Clone)]
 pub struct ChannelState<K>{
     channels_map: Arc<RwLock<HashMap<K, (usize, HashSet<String>)>>>, 
-    subscribers_queue: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, Vec<String>)>>>>>,
+    subscribers: Arc<Mutex<HashMap<K, Vec<Sender<(K, Vec<String>)>>>>>,
 }
 
 impl<K> ChannelState<K>{
     fn new() -> Self{
         let channels_map = Arc::new(RwLock::new(HashMap::new()));
-        let subscribers_queue = Arc::new(Mutex::new(HashMap::new()));
-        ChannelState { channels_map, subscribers_queue }
+        let subscribers = Arc::new(Mutex::new(HashMap::new()));
+        ChannelState { channels_map, subscribers }
     }
 }
 
@@ -252,6 +252,7 @@ impl RedisState<String, RedisValue>{
                     RedisValue::String(_) => "string".to_string(),
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
+                    RedisValue::Number(_) => "number".to_string(),
                 }
             },
             None => "none".to_string()
@@ -369,6 +370,19 @@ impl RedisState<String, RedisValue>{
         }
     }
 
+    pub fn incr(&self, command: &Vec<String>) -> String {
+        let mut map_guard = self.map_state.map.write().unwrap();
+        if let Some(val) = map_guard.get_mut(&command[1]){
+            match val{
+                RedisValue::Number(n) => {
+                    *n += 1;
+                    format!(":{}\r\n", n)
+                },
+                _ => format!("ERR_NOT_SUPPORTED"),
+            }
+        } else {format!("ERR_NOT_SUPPORTED")}
+    } 
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
         client_state.subscribe_mode = true;
         let subs_count = if client_state.subscriptions.1.contains(&command[1]){
@@ -395,9 +409,8 @@ impl RedisState<String, RedisValue>{
         }
 
         if let Some(sender) = &client_state.sender {
-            let mut queue_guard = self.channels_state.subscribers_queue.lock().unwrap();
-            let queue = queue_guard.entry(command[1].to_owned()).or_insert(VecDeque::new());
-            queue.push_back(sender.clone());
+            let mut subs_guard = self.channels_state.subscribers.lock().unwrap();
+            subs_guard.entry(command[1].to_owned()).or_insert(Vec::new()).push(sender.clone());
         }
     }
 
@@ -405,12 +418,12 @@ impl RedisState<String, RedisValue>{
         let subs = self.channels_state.channels_map.read().unwrap().get(&command[1]).unwrap().0;
         let channel_name = &command[1];
         let messages = command.iter().skip(2).cloned().collect::<Vec<_>>();
-        let mut subscribers_guard = self.channels_state.subscribers_queue.lock().unwrap();
-        if let Some(queue) = subscribers_guard.get_mut(&command[1]){
-            queue.retain(|sender| 
+        let mut subs_guard = self.channels_state.subscribers.lock().unwrap();
+        if let Some(subs) = subs_guard.get_mut(&command[1]){
+            subs.retain(|sender| 
                 match sender.try_send((channel_name.to_owned(), messages.clone())){
                     Ok(_) => true,
-                    Err(TrySendError::Full(_)) => return true,
+                    Err(TrySendError::Full(_)) => true,
                     Err(TrySendError::Closed(_)) => false,
             })
         }
@@ -420,10 +433,11 @@ impl RedisState<String, RedisValue>{
 
     pub fn unsubscribe(&self, client_state: &mut ClientState<String, String>, client: &String, command: &Vec<String>) -> String{
         let mut channel_guard = self.channels_state.channels_map.write().unwrap();
-        let (count, client_set) = channel_guard.get_mut(&command[1]).unwrap(); //check this
-        *count -= 1;
-        client_set.remove(client);
-        
+        if let Some((count, client_set)) = channel_guard.get_mut(&command[1]){
+            *count -= 1;
+            client_set.remove(client);
+        }
+
         client_state.subscriptions.1.remove(&command[1]);
         client_state.subscriptions.0 -= 1;
         let subs_count = client_state.subscriptions.0;

@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 #[derive(Clone)]
 pub enum RedisValue{
     String(String),
+    Number(u64),
     StringWithTimeout((String, Instant)),
     Stream(StreamValue<String, String>),
 }
@@ -46,12 +47,14 @@ impl RedisValue{
             RedisValue::String(s) => Some(s),
             RedisValue::StringWithTimeout((s, _)) => Some(s),
             RedisValue::Stream(_) => None,
+            RedisValue::Number(_) => None,
         }
     }
 
     pub fn get_blocked_result(&self) -> Option<Vec<Value>> {
         match self{
             RedisValue::String(_) => None,
+            RedisValue::Number(_) => None,
             RedisValue::StringWithTimeout((_, _)) => None,
             RedisValue::Stream(val) => {
                 let (id, pairs) = &val.waiters_value;
@@ -64,6 +67,7 @@ impl RedisValue{
     pub fn get_stream_range(&self, start_id: &String, stop_id: Option<&String>) -> Vec<Value>{
         match self{
             RedisValue::String(_) => Vec::new(), // fix error handling,
+            RedisValue::Number(_) => Vec::new(), // fix error handling,
             RedisValue::StringWithTimeout((_, _)) => Vec::new(), // fix error handling,
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
@@ -131,6 +135,7 @@ impl RedisValue{
     pub fn update_stream(&mut self, id: &String, pairs_flattened: &Vec<String>) -> String{
         match self{
             RedisValue::String(_) => format!("not supported"),
+            RedisValue::Number(_) => format!("not supported"),
             RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
             RedisValue::Stream(stream) => {
                 let mut new_id = id.clone();
