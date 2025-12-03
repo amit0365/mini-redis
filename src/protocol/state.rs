@@ -1,13 +1,26 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::Duration};
-use tokio::{net::TcpStream, sync::mpsc::{self, Sender, error::TrySendError}, time::sleep};
+use tokio::{net::{TcpStream, unix::SocketAddr}, sync::mpsc::{self, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
 use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
+    pub channels_state: ChannelState<K>,
     pub map_state: MapState<K, RedisValue>,
     pub list_state: ListState<K, RedisValue>,
+}
+
+#[derive(Clone)]
+pub struct ChannelState<K>{
+    channels_map: Arc<RwLock<HashMap<K, (usize, HashSet<String>)>>>, 
+}
+
+impl<K> ChannelState<K>{
+    fn new() -> Self{
+        let channels_map = Arc::new(RwLock::new(HashMap::new()));
+        ChannelState { channels_map }
+    }
 }
 
 #[derive(Clone)]
@@ -43,7 +56,6 @@ impl<K> ListState<K, RedisValue>{
 pub struct MapState<K, RedisValue>{
     pub map: Arc<RwLock<HashMap<K, RedisValue>>>, // add methods instread of pub fileds
     pub waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,    
-
 }
 
 impl<K> MapState<K, RedisValue>{
@@ -56,9 +68,10 @@ impl<K> MapState<K, RedisValue>{
 
 impl RedisState<String, RedisValue>{
     pub fn new() -> Self{
+        let channels_state = ChannelState::new();
         let map_state = MapState::new();
         let list_state = ListState::new();
-        RedisState { map_state, list_state }
+        RedisState { channels_state, map_state, list_state }
     }
 
     pub fn rpush(&mut self, command: &Vec<String>) -> String {
@@ -354,17 +367,29 @@ impl RedisState<String, RedisValue>{
         }
     }
 
-    pub fn subscribe(&self, client_subs: &mut ClientState<String, String>, command: &Vec<String>) -> String{
+    pub fn subscribe(&mut self, client_subs: &mut ClientState<String, String>, client: String, command: &Vec<String>) -> String{
         client_subs.subscribe_mode = true;
         let subs_count = if client_subs.subscriptions.1.contains(&command[1]){
             client_subs.subscriptions.0
         } else {
+            let mut set = HashSet::new();
+            let mut channel_guard = self.channels_state.channels_map.write().unwrap();
+            let (count, client_set) = channel_guard.entry(command[1].to_owned()).or_insert((0, set));
+            *count += 1;
+            client_set.insert(client);
+
             client_subs.subscriptions.1.insert(command[1].to_owned());
             client_subs.subscriptions.0 += 1;
             client_subs.subscriptions.0
         };
 
         format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", command[0].len(), command[0].to_lowercase(), command[1].len(), command[1], subs_count)
+    }
+
+    pub fn publish(&self, client: String, command: &Vec<String>) -> String{
+        let subs = self.channels_state.channels_map.read().unwrap().get(&command[1]).unwrap().0;
+        println!("{}", subs);
+        format!(":{}\r\n", subs)
     }
 
 }

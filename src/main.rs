@@ -15,7 +15,7 @@ async fn main() {
     let state = RedisState::new();
     
     loop {
-        let (mut stream, _addr) = listener.accept().await.unwrap();
+        let (mut stream, addr) = listener.accept().await.unwrap();
             println!("accepted new connection");
 
         let mut buf = [0; 512];
@@ -40,7 +40,7 @@ async fn main() {
                             if client_state.subscribe_mode{
                                 match commands[0].to_uppercase().as_str() {
                                     "SUBSCRIBE" => {
-                                        let response = local_state.subscribe(&mut client_state, &commands);
+                                        let response = local_state.subscribe(&mut client_state, addr.to_string(), &commands);
                                         stream.write_all(response.as_bytes()).await.unwrap()
                                     }
                                     "PING" => {
@@ -48,10 +48,9 @@ async fn main() {
                                         stream.write_all(response.as_bytes()).await.unwrap()
                                     },
                                     "UNSUBSCRIBE" => {
-                                        let response = local_state.subscribe(&mut client_state, &commands);
+                                        let response = local_state.subscribe(&mut client_state, addr.to_string(), &commands);
                                         stream.write_all(response.as_bytes()).await.unwrap()
                                     }
-
 
                                     _ => {
                                         let response = format!("-ERR Can't execute '{}' in subscribed mode\r\n", commands[0].to_lowercase());
@@ -149,7 +148,11 @@ async fn main() {
                                         stream.write_all(response.as_bytes()).await.unwrap()
                                     }
                                     "SUBSCRIBE" => {
-                                        let response = local_state.subscribe(&mut client_state, &commands);
+                                        let response = local_state.subscribe(&mut client_state, addr.to_string(),  &commands);
+                                        stream.write_all(response.as_bytes()).await.unwrap()
+                                    }
+                                    "PUBLISH" => {
+                                        let response = local_state.publish(addr.to_string(), &commands);
                                         stream.write_all(response.as_bytes()).await.unwrap()
                                     }
                                     _ => (),
