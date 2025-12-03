@@ -60,7 +60,7 @@ async fn execute_commands_normal(stream: &mut TcpStream, local_state: &mut Redis
                     }
                     _ => (), // fix error handling
                 }
-            }
+            } else { stream.write_all(b"$-1\r\n").await.unwrap()}
         }
         "RPUSH" => {
             let response = format!(":{}\r\n", local_state.rpush(&commands));
