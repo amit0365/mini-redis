@@ -153,7 +153,8 @@ async fn main() {
             Some((master_ip, master_port)) => {
                 let mut master_stream = TcpStream::connect(format!("{}:{}", master_ip, master_port)).await.unwrap();
                 tokio::spawn(async move {
-                    master_stream.write(format!("$4\r\n{}\r\n", "PING".to_string()).as_bytes()).await.unwrap()
+                    let ping_array = encode_resp_array(&vec!["PING".to_string()]);
+                    master_stream.write(ping_array.as_bytes()).await.unwrap()
                 });
             },
             None => (),
