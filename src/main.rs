@@ -161,10 +161,10 @@ async fn main() {
                         match master_stream.read(&mut buf).await {
                             Ok(0) => (),
                             Ok(n) => {
-                                let buffer_str = from_utf8(&buf[..n]).unwrap().split("\r\n").collect::<Vec<&str>>();;
+                                let buffer_str = from_utf8(&buf[..n]).unwrap().split("\r\n").collect::<Vec<&str>>();
                                 match buffer_str[0]{
                                     "+PONG" => {
-                                        let replconf_msg1 = encode_resp_array(&vec!["REPLCONF".to_string(), "listening-port".to_string(), port]);
+                                        let replconf_msg1 = encode_resp_array(&vec!["REPLCONF".to_string(), "listening-port".to_string(), port.to_owned()]);
                                         master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
                                         let replconf_msg2 = encode_resp_array(&vec!["REPLCONF".to_string(), "capa".to_string(), "psync2".to_string()]);
                                         master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
