@@ -15,8 +15,8 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
             format!("+OK\r\n")
         }
         "PSYNC" => {
-            let repl_id = local_state.server_state.map.get("master_repl_id").unwrap();
-            let offset = local_state.server_state.map.get("master_repl_offset").unwrap();
+            let repl_id = local_state.server_state.map.get(&"master_repl_id".to_string()).unwrap();
+            let offset = local_state.server_state.map.get(&"master_repl_offset".to_string()).unwrap();
             format!("+FULLRESYNC {} {}\r\n", repl_id, offset)
         }
         "SET" => {
