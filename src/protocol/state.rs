@@ -37,7 +37,7 @@ impl ServerState<String, RedisValue>{
     }
 
     pub fn update(&mut self, pairs: &Vec<(String, RedisValue)>){
-        let _ = pairs.iter().map(|(k, v)| self.map.insert(k.to_owned(), v.clone()));
+        let _ = pairs.iter().map(|(k, v)| self.map.insert(k.to_owned(), v.clone())).collect::<Vec<_>>();
     }
 }
 
@@ -412,7 +412,6 @@ impl RedisState<String, RedisValue>{
             "REPLICATION" => {
                 let mut lines = Vec::new();
                 for (key, value) in self.server_state.map.iter() {
-                    println!("{}:{}", key, value);
                     lines.push(format!("{}:{}", key, value));
                 }
                 let content = lines.join("\r\n");
