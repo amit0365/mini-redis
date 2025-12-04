@@ -121,8 +121,6 @@ async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
     
-    loop {
-        
     let args = env::args().collect::<Vec<_>>();
     let mut port = "6379".to_string();
     let mut master_contact: Option<String> = None;
@@ -172,7 +170,7 @@ async fn main() {
         state.server_state.update(&master_config);
     }
     
-
+    loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
             println!("accepted new connection");
 

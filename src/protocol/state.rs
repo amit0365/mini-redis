@@ -412,6 +412,7 @@ impl RedisState<String, RedisValue>{
             "REPLICATION" => {
                 let mut lines = Vec::new();
                 for (key, value) in self.server_state.map.iter() {
+                    println!("{}:{}", key, value);
                     lines.push(format!("{}:{}", key, value));
                 }
                 let content = lines.join("\r\n");
