@@ -8,6 +8,7 @@ pub enum RedisValue{
     Number(u64),
     StringWithTimeout((String, Instant)),
     Stream(StreamValue<String, String>),
+    Commands(Vec<String>),
 }
 
 #[derive(Clone, Serialize)]
@@ -48,6 +49,7 @@ impl fmt::Display for RedisValue {
             RedisValue::Number(n) => write!(f, "{}", n),
             RedisValue::StringWithTimeout((s, _)) => write!(f, "{}", s),
             RedisValue::Stream(_) => write!(f, "stream"),
+            RedisValue::Commands(_) => write!(f, "commands"),
         }
     }
 }
@@ -59,6 +61,7 @@ impl RedisValue{
             RedisValue::StringWithTimeout((s, _)) => Some(s),
             RedisValue::Stream(_) => None,
             RedisValue::Number(_) => None,
+            RedisValue::Commands(_) => None,
         }
     }
 
@@ -72,6 +75,7 @@ impl RedisValue{
                 let pairs_flattened = pairs.iter().flat_map(|(id, pair)| [id, pair]).collect::<Vec<_>>();
                 Some(vec![json!([id, pairs_flattened])])
             },
+            RedisValue::Commands(_) => None,
         }
     }
 
@@ -139,7 +143,8 @@ impl RedisValue{
                 }
 
                 entries
-            }
+            },
+            RedisValue::Commands(_) => Vec::new(),
         }
     }
 
@@ -236,7 +241,8 @@ impl RedisValue{
 
                 stream.insert(&new_id, new_id_time, new_id_seq, pairs_flattened);
                 format!("${}\r\n{}\r\n", new_id.len(), new_id)
-            }
+            },
+            RedisValue::Commands(_) => format!("not supported"),
         }
     }
 }

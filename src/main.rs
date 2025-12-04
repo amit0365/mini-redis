@@ -1,13 +1,21 @@
 use std::{env, str::from_utf8, sync::{Arc, atomic::{AtomicUsize, Ordering}}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
-use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::mpsc};
+use crate::{protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::{encode_resp_array, parse_resp}};
 use base64::{Engine as _, engine::general_purpose};
 mod protocol;
 mod utils;
 
 const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
 
-async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>) -> String{
+async fn execute_commands_normal(
+    stream: &mut TcpStream,
+    write_to_stream: bool,
+    local_state: &mut RedisState<String, RedisValue>,
+    client_state: &mut ClientState<String, String>,
+    replicas_state: &mut ReplicasState,
+    client_add: String,
+    commands: &Vec<String>
+) -> String{
     let response = match commands[0].to_uppercase().as_str() {
         "PING" => format!("+PONG\r\n"),
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
@@ -21,37 +29,35 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
                 stream.write_all(&rdb_message).await.unwrap();
             }
 
-            for command in &local_state.server_state.write_commands{
-                println!("cmd {}", command);
-                stream.write_all(command.as_string().unwrap().as_bytes()).await.unwrap();
-            }
-
+            let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
+            let (sender, receiver) = mpsc::channel(1);
+            replicas_senders_guard.push(sender);
+            
+            client_state.set_replica(true);
+            client_state.set_replica_receiver(receiver);
+            local_state.server_state_mut().set_replication_mode(true);
             format!("") // send empty string since we dont write to stream
         }
         "SET" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
+            println!("set");
             local_state.set(&commands)
         }
         "GET" => {
             local_state.get(&commands)
         }
         "RPUSH" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.rpush(&commands)
         }
         "LPUSH" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.lpush(&commands)
         }
         "LLEN" => {
             local_state.llen(&commands)
         }
         "LPOP" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.lpop(&commands)
         }
         "BLPOP" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.blpop(&commands).await
         }
         "LRANGE" => {
@@ -61,7 +67,6 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
             local_state.type_command(&commands)
         }
         "XADD" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.xadd(&commands)
         }
         "XRANGE" => {
@@ -71,17 +76,14 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
             local_state.xread(&commands).await
         }
         "SUBSCRIBE" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             let count_response = local_state.subscribe(client_state, &client_add,  &commands);
             local_state.handle_subscriber(client_state, &commands).await;
             count_response
         }
         "PUBLISH" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.publish(&commands)
         }
         "INCR" => {
-            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.incr(&commands)
         }
         "MULTI" => {
@@ -97,44 +99,26 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
         stream.write_all(response.as_bytes()).await.unwrap();
     }
 
+    let is_write_command = matches!(
+        commands[0].to_uppercase().as_str(),
+        "SET" | "DEL" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "INCR"
+    );
+
+    //println!("client replica {}", client_state.is_replica());
+    if local_state.server_state().replication_mode() && is_write_command && write_to_stream{
+        println!("propagate");
+        let senders = {
+            let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
+            replica_senders_guard.clone()
+        };
+
+        for sender in senders{
+            sender.send(commands.to_vec()).await.unwrap();
+        };
+    }
+
     response
 }
-
-// async fn execute_replication_write_commands(stream: &mut TcpStream, write_to_stream: bool, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>) -> String{
-//     let response = match commands[0].to_uppercase().as_str() {
-//         "SET" => {
-//             local_state.set(&commands)
-//         }
-//         "RPUSH" => {
-//             local_state.rpush(&commands)
-//         }
-//         "LPUSH" => {
-//             local_state.lpush(&commands)
-//         }
-//         "LPOP" => {
-//             local_state.lpop(&commands)
-//         }
-//         "BLPOP" => {
-//             local_state.blpop(&commands).await
-//         }
-//         "XADD" => {
-//             local_state.xadd(&commands)
-//         }
-//         "INCR" => {
-//             local_state.incr(&commands)
-//         }
-//         "MULTI" => {
-//             local_state.multi(client_state)
-//         }
-//         _ => format!("$-1\r\n"), //todo fix
-//     };
-
-//     if write_to_stream && commands[0].to_uppercase().as_str() != "PSYNC" {
-//         stream.write_all(response.as_bytes()).await.unwrap();
-//     }
-
-//     response
-// }
 
 #[tokio::main]
 async fn main() {
@@ -166,9 +150,10 @@ async fn main() {
     let listener = Arc::new(TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap());
     let connection_count = Arc::new(AtomicUsize::new(0));
     let mut state = RedisState::new();
+    let replicas_state = ReplicasState::new();
 
     if master_contact.is_some(){ // REPLICA
-        state.server_state.map.insert("role".to_string(), RedisValue::String("slave".to_string()));
+        state.server_state_mut().map_mut().insert("role".to_string(), RedisValue::String("slave".to_string()));
         match master_contact.unwrap().split_once(" "){
             Some((master_ip, master_port)) => {
                 let mut master_stream = TcpStream::connect(format!("{}:{}", master_ip, master_port)).await.unwrap();
@@ -194,7 +179,7 @@ async fn main() {
                                         let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
                                         master_stream.write(psync_msg.as_bytes()).await.unwrap();
                                     }
-                                    _ => {}
+                                    _ => println!("from master stream {:?}", buffer_str)
                                 }
                             },
 
@@ -212,7 +197,7 @@ async fn main() {
             ("master_repl_offset".to_string(), RedisValue::Number(0)),
         ];
 
-        state.server_state.update(&master_config);
+        state.server_state_mut().update(&master_config);
     }
     
     loop {
@@ -221,6 +206,7 @@ async fn main() {
 
         let mut buf = [0; 512];
         let mut local_state = state.clone();
+        let mut local_replicas_state = replicas_state.clone();
 
         let count = connection_count.fetch_add(1, Ordering::SeqCst);
         if count >= 10000 {
@@ -230,11 +216,12 @@ async fn main() {
 
         let cc = connection_count.clone();
         tokio::spawn(async move {
-            let mut client_state = ClientState::new();
+            let mut client_state = ClientState::new(addr.to_string());
+            println!("addy {}", addr.to_string());
             
             loop {
-                if client_state.subscribe_mode{
-                    if let Some(receiver) = client_state.receiver.as_mut(){
+                if client_state.is_subscribe_mode(){
+                    if let Some(receiver) = client_state.get_sub_receiver_mut(){
                         tokio::select! {
                             msg = receiver.recv() => {
                                 if let Some((channel_name, message)) = msg {
@@ -280,21 +267,64 @@ async fn main() {
                             }
                         }
                     }
+                } else if client_state.is_replica(){
+                    println!("is_replica");
+                    if let Some(receiver) = client_state.get_replica_receiver_mut(){
+                        println!("received");
+                        tokio::select! {
+                            msg = receiver.recv() => {
+                                if let Some(commands) = msg {
+                                    println!("cmd {:?}", commands);
+                                    let _ = execute_commands_normal(
+                                        &mut stream, 
+                                        false, 
+                                        &mut local_state, 
+                                        &mut client_state, 
+                                        &mut local_replicas_state, 
+                                        addr.to_string(), 
+                                        &commands
+                                    ).await;
+                                }
+                            },
+
+                            bytes_read = stream.read(&mut buf) => {
+                                match bytes_read {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        let parsed_commands = parse_resp(&buf[..n]);
+                                        if let Some(commands) = parsed_commands {
+                                            let _ = execute_commands_normal(
+                                                &mut stream, 
+                                                true, 
+                                                &mut local_state, 
+                                                &mut client_state, 
+                                                &mut local_replicas_state, 
+                                                addr.to_string(), 
+                                                &commands
+                                            ).await;
+                                        }
+                                    }
+
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    }
                 } else {
                     match stream.read(&mut buf).await {
                         Ok(0) => break,
                         Ok(n) => {
                             let parsed_commands = parse_resp(&buf[..n]);
                             if let Some(commands) = parsed_commands {
-                                if client_state.multi_queue_mode{
+                                if client_state.is_multi_queue_mode(){
                                     match commands[0].as_str(){
                                         "EXEC" => {
                                             let mut responses = Vec::new();
-                                            match client_state.queued_commands.len(){
+                                            match client_state.commands_len(){
                                                 0 => stream.write_all(b"*0\r\n").await.unwrap(),
                                                 _ => {
-                                                    while let Some(queued_command) = client_state.queued_commands.pop_front(){
-                                                        let response = execute_commands_normal(&mut stream, false, &mut local_state, &mut client_state, addr.to_string(), &queued_command).await;
+                                                    while let Some(queued_command) = client_state.pop_command(){
+                                                        let response = execute_commands_normal(&mut stream, false, &mut local_state, &mut client_state, &mut local_replicas_state, addr.to_string(), &queued_command).await;
                                                         responses.push(response);
                                                     }
 
@@ -303,15 +333,15 @@ async fn main() {
                                                 },
                                             }
 
-                                            client_state.multi_queue_mode = false;
+                                            client_state.set_multi_queue_mode(false);
                                         },
                                         "DISCARD" => {
-                                            client_state.queued_commands.clear();
-                                            client_state.multi_queue_mode = false;
+                                            client_state.clear_commands();
+                                            client_state.set_multi_queue_mode(false);
                                             stream.write_all(b"+OK\r\n").await.unwrap()
                                         }
                                         _ => {
-                                            client_state.queued_commands.push_back(commands);
+                                            client_state.push_command(commands);
                                             stream.write_all(b"+QUEUED\r\n").await.unwrap()
                                         },
                                     }
@@ -321,7 +351,15 @@ async fn main() {
                                         "DISCARD" => stream.write_all(b"-ERR DISCARD without MULTI\r\n").await.unwrap(),
 
                                         _ => {
-                                            let _ = execute_commands_normal(&mut stream, true, &mut local_state, &mut client_state, addr.to_string(), &commands).await;
+                                            let _ = execute_commands_normal(
+                                                &mut stream, 
+                                                true, 
+                                                &mut local_state, 
+                                                &mut client_state, 
+                                                &mut local_replicas_state, 
+                                                addr.to_string(), 
+                                                &commands
+                                            ).await;
                                         }
                                     }
                                 }
