@@ -48,7 +48,6 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) -
 pub fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
         let string_buf = std::str::from_utf8(buf).unwrap();
         let tokens = string_buf.split("\r\n").collect::<Vec<&str>>();
-        println!("toks {:?}", tokens);
         let commands = tokens
             .iter()
             .skip(2)
