@@ -39,7 +39,6 @@ async fn execute_commands_normal(
             format!("") // send empty string since we dont write to stream
         }
         "SET" => {
-            println!("set");
             local_state.set(&commands)
         }
         "GET" => {
@@ -104,9 +103,7 @@ async fn execute_commands_normal(
         "SET" | "DEL" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "INCR"
     );
 
-    //println!("client replica {}", client_state.is_replica());
     if local_state.server_state().replication_mode() && is_write_command && write_to_stream{
-        println!("propagate");
         let senders = {
             let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
             replica_senders_guard.clone()
@@ -179,7 +176,7 @@ async fn main() {
                                         let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
                                         master_stream.write(psync_msg.as_bytes()).await.unwrap();
                                     }
-                                    _ => println!("from master stream {:?}", buffer_str)
+                                    _ => ()
                                 }
                             },
 
@@ -217,7 +214,6 @@ async fn main() {
         let cc = connection_count.clone();
         tokio::spawn(async move {
             let mut client_state = ClientState::new(addr.to_string());
-            println!("addy {}", addr.to_string());
             
             loop {
                 if client_state.is_subscribe_mode(){
@@ -268,22 +264,12 @@ async fn main() {
                         }
                     }
                 } else if client_state.is_replica(){
-                    println!("is_replica");
                     if let Some(receiver) = client_state.get_replica_receiver_mut(){
-                        println!("received");
                         tokio::select! {
                             msg = receiver.recv() => {
                                 if let Some(commands) = msg {
-                                    println!("cmd {:?}", commands);
-                                    let _ = execute_commands_normal(
-                                        &mut stream, 
-                                        false, 
-                                        &mut local_state, 
-                                        &mut client_state, 
-                                        &mut local_replicas_state, 
-                                        addr.to_string(), 
-                                        &commands
-                                    ).await;
+                                    let resp_command = encode_resp_array(&commands);
+                                    stream.write_all(resp_command.as_bytes()).await.unwrap();
                                 }
                             },
 

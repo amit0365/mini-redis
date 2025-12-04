@@ -120,7 +120,7 @@ impl ServerState<String, RedisValue>{
 }
 
 pub struct ClientState<K, V>{
-    addr: String,
+    pub addr: String,
     queued_state: QueuedState<K, V>,
     subscription_state: SubscriptionState<K, V>,
     replication_state: ReplicationState<K, V>,
