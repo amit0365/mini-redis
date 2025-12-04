@@ -120,12 +120,38 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
 async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
-        
-    let port = env::args().nth(2).unwrap_or_else(|| "6379".to_string());
+    
+    let args = env::args().collect::<Vec<_>>();
+    let mut port = "6379".to_string();
+    let mut replicate_from_master: Option<String> = None;
+
+    let mut i = 1;
+    while i < args.len(){
+        match args[i].as_str(){
+            "--port" => {
+                port = args[i + 1].to_owned();
+                i += 2;
+            },
+
+            "--replicaof" => {
+                replicate_from_master = Some(args[i + 1].to_owned());
+                i += 2;
+            },
+
+            _ => i += 1
+            
+        }
+    }
+
     let listener = Arc::new(TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap());
     let connection_count = Arc::new(AtomicUsize::new(0));
     let mut state = RedisState::new();
-    state.server_state.map.insert("role".to_string(), RedisValue::String("master".to_string()));
+
+    if replicate_from_master.is_some(){
+        state.server_state.map.insert("role".to_string(), RedisValue::String("slave".to_string()));
+    } else {
+        state.server_state.map.insert("role".to_string(), RedisValue::String("master".to_string()));
+    }
     
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
