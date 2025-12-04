@@ -160,10 +160,11 @@ async fn main() {
                     match master_stream.read(&mut buf).await {
                         Ok(0) => (),
                         Ok(n) => {
+                            println!("n {}", n);
                             let parsed_commands = parse_resp(&buf[..n]);
                             if let Some(commands) = parsed_commands {
                                 match commands[0].as_str(){
-                                    "PONG" => {
+                                    "+PONG" => {
                                         let replconf_msg1 = encode_resp_array(&vec![format!("listening-port {}", port)]);
                                         master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
                                         let replconf_msg2 = encode_resp_array(&vec!["capa psync2".to_string()]);
