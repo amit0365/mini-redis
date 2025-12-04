@@ -1,4 +1,4 @@
-use std::{env, sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
+use std::{env, str::from_utf8, sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
 mod protocol;
@@ -161,9 +161,8 @@ async fn main() {
                         Ok(0) => (),
                         Ok(n) => {
                             println!("n {}", n);
-                            let parsed_commands = parse_resp(&buf[..n]);
-                            if let Some(commands) = parsed_commands {
-                                match commands[0].as_str(){
+                            let buffer_str = from_utf8(&buf[..n]).unwrap().split("\r\n").collect::<Vec<&str>>();;
+                                match buffer_str[0].as_str(){
                                     "+PONG" => {
                                         let replconf_msg1 = encode_resp_array(&vec![format!("listening-port {}", port)]);
                                         master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
@@ -292,7 +291,6 @@ async fn main() {
                                             stream.write_all(b"+QUEUED\r\n").await.unwrap()
                                         },
                                     }
-                                    
                                 } else {
                                     match commands[0].as_str(){
                                         "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
