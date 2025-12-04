@@ -156,10 +156,26 @@ async fn main() {
                     let ping_msg = encode_resp_array(&vec!["PING".to_string()]);
                     master_stream.write(ping_msg.as_bytes()).await.unwrap();
 
-                    let replconf_msg1 = encode_resp_array(&vec![format!("listening-port {}", port)]);
-                    master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
-                    let replconf_msg2 = encode_resp_array(&vec!["capa psync2".to_string()]);
-                    master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
+                    let mut buf = [0; 512];
+                    match master_stream.read(&mut buf).await {
+                        Ok(0) => (),
+                        Ok(n) => {
+                            let parsed_commands = parse_resp(&buf[..n]);
+                            if let Some(commands) = parsed_commands {
+                                match commands[0].as_str(){
+                                    "PONG" => {
+                                        let replconf_msg1 = encode_resp_array(&vec![format!("listening-port {}", port)]);
+                                        master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
+                                        let replconf_msg2 = encode_resp_array(&vec!["capa psync2".to_string()]);
+                                        master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        },
+
+                        Err(_) => (),
+                    }
                 });
             },
             None => (),
