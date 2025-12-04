@@ -14,6 +14,11 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
         "REPLCONF" => {
             format!("+OK\r\n")
         }
+        "PSYNC" => {
+            let repl_id = local_state.server_state.map.get("master_repl_id").unwrap();
+            let offset = local_state.server_state.map.get("master_repl_offset").unwrap();
+            format!("+FULLRESYNC {} {}\r\n", repl_id, offset)
+        }
         "SET" => {
             match commands.iter().skip(3).next() {
                 Some(str) => {
