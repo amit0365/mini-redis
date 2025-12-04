@@ -35,6 +35,10 @@ impl ServerState<String, RedisValue>{
     fn new() ->Self{
         ServerState { map: HashMap::new() }
     }
+
+    pub fn update(&mut self, pairs: &Vec<(String, RedisValue)>){
+        let _ = pairs.iter().map(|(k, v)| self.map.insert(k.to_owned(), v.clone()));
+    }
 }
 
 pub struct ClientState<K, V>{

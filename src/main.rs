@@ -123,7 +123,7 @@ async fn main() {
     
     let args = env::args().collect::<Vec<_>>();
     let mut port = "6379".to_string();
-    let mut replicate_from_master: Option<String> = None;
+    let mut master_contact: Option<String> = None;
 
     let mut i = 1;
     while i < args.len(){
@@ -134,7 +134,7 @@ async fn main() {
             },
 
             "--replicaof" => {
-                replicate_from_master = Some(args[i + 1].to_owned());
+                master_contact = Some(args[i + 1].to_owned());
                 i += 2;
             },
 
@@ -147,12 +147,26 @@ async fn main() {
     let connection_count = Arc::new(AtomicUsize::new(0));
     let mut state = RedisState::new();
 
-    if replicate_from_master.is_some(){
+    if master_contact.is_some(){
         state.server_state.map.insert("role".to_string(), RedisValue::String("slave".to_string()));
+        match master_contact.unwrap().split_once(" "){
+            Some((master_ip, master_port)) => {
+                let mut master_stream = TcpStream::connect(format!("{}", master_ip)).await.unwrap();
+                tokio::spawn(async move {
+                    master_stream.write(format!("$4\r\n{}\r\n", "PING".to_string()).as_bytes()).await.unwrap()
+                });
+            },
+            None => (),
+        }
+
     } else {
-        state.server_state.map.insert("role".to_string(), RedisValue::String("master".to_string()));
-        state.server_state.map.insert("master_replid".to_string(), RedisValue::String("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()));
-        state.server_state.map.insert("master_repl_offset".to_string(), RedisValue::Number(0));
+        let master_config = vec![
+            ("role".to_string(), RedisValue::String("master".to_string())),
+            ("master_replid".to_string(), RedisValue::String("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())),
+            ("master_repl_offset".to_string(), RedisValue::Number(0)),
+        ];
+
+        state.server_state.update(&master_config);
     }
     
     loop {
