@@ -1,4 +1,4 @@
-use std::{env, str::from_utf8, sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
+use std::{env, str::from_utf8, sync::{Arc, atomic::{AtomicUsize, Ordering}}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
 use base64::{Engine as _, engine::general_purpose};
@@ -10,97 +10,57 @@ const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdH
 async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>) -> String{
     let response = match commands[0].to_uppercase().as_str() {
         "PING" => format!("+PONG\r\n"),
-        "ECHO" => {
-            let message = &commands[1]; //multiple arg will fail like hello world. check to use .join("")
-            format!("${}\r\n{}\r\n", message.len(), message)
-        }
-        "REPLCONF" => {
-            format!("+OK\r\n")
-        }
+        "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
+        "REPLCONF" => format!("+OK\r\n"),
         "PSYNC" => {
-            let repl_id = local_state.server_state.map.get("master_replid").unwrap();
-            let offset = local_state.server_state.map.get("master_repl_offset").unwrap();
-            let fullresync_response = format!("+FULLRESYNC {} {}\r\n", repl_id, offset);
-
+            let full_sync_response = local_state.psync();
             if write_to_stream {
-                stream.write_all(fullresync_response.as_bytes()).await.unwrap();
+                stream.write_all(full_sync_response.as_bytes()).await.unwrap();
                 let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE).unwrap();
                 let rdb_message = [format!("${}\r\n", rdb_bytes.len()).into_bytes(), rdb_bytes].concat();
                 stream.write_all(&rdb_message).await.unwrap();
             }
 
-            fullresync_response
-        }
-        "SET" => {
-            match commands.iter().skip(3).next() {
-                Some(str) => {
-                    match str.to_uppercase().as_str() {
-                        "PX" => {
-                            let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
-                            local_state.map_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
-                        }
-                        "EX" => {
-                            let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
-                            local_state.map_state.map.write().unwrap().insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)));
-                        }
-                        _ => (),
-                    }
-                }
-                None => {
-                    let redis_val = match commands[2].parse::<u64>(){
-                        Ok(num) => RedisValue::Number(num),
-                        Err(_) => RedisValue::String(commands[2].to_owned()),
-                    };
-
-                    local_state.map_state.map.write().unwrap().insert(commands[1].to_owned(), redis_val);
-                }
+            for comand in &local_state.server_state.write_commands{
+                stream.write_all(comand.as_string().unwrap().as_bytes()).await.unwrap();
             }
 
-            format!("+OK\r\n")
+            format!("") // send empty string since we dont write to stream
+        }
+        "SET" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
+            local_state.set(&commands)
         }
         "GET" => {
-            let value = local_state.map_state.map.read().unwrap().get(&commands[1]).cloned();
-            if let Some(value) = value {
-                match value {
-                    RedisValue::StringWithTimeout((value, timeout)) => {
-                        if Instant::now() < timeout {
-                            format!("${}\r\n{}\r\n", value.len(), value)
-                        } else {
-                            format!("$-1\r\n")
-                        }
-                    }
-                    RedisValue::String(val) => {
-                        format!("${}\r\n{}\r\n", val.len(), val)
-                    }
-                    RedisValue::Number(val) => {
-                        format!("${}\r\n{}\r\n", val.to_string().len(), val)
-                    }
-                    _ => format!("$-1\r\n") // fix error handling
-                }
-            } else { format!("$-1\r\n")}
+            local_state.get(&commands)
         }
         "RPUSH" => {
-            format!(":{}\r\n", local_state.rpush(&commands))
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
+            local_state.rpush(&commands)
         }
         "LPUSH" => {
-            format!(":{}\r\n", local_state.lpush(&commands))
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
+            local_state.lpush(&commands)
         }
         "LLEN" => {
-            format!(":{}\r\n", local_state.llen(&commands))
+            local_state.llen(&commands)
         }
         "LPOP" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.lpop(&commands)
         }
         "BLPOP" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.blpop(&commands).await
         }
         "LRANGE" => {
             local_state.lrange(&commands[1], &commands[2], &commands[3])
         }
         "TYPE" => {
-            format!("+{}\r\n", local_state.type_command(&commands))
+            local_state.type_command(&commands)
         }
         "XADD" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.xadd(&commands)
         }
         "XRANGE" => {
@@ -110,14 +70,17 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
             local_state.xread(&commands).await
         }
         "SUBSCRIBE" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             let count_response = local_state.subscribe(client_state, &client_add,  &commands);
             local_state.handle_subscriber(client_state, &commands).await;
             count_response
         }
         "PUBLISH" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.publish(&commands)
         }
         "INCR" => {
+            local_state.server_state.write_commands.push(RedisValue::String(commands[0].to_owned()));
             local_state.incr(&commands)
         }
         "MULTI" => {
@@ -135,6 +98,42 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
 
     response
 }
+
+// async fn execute_replication_write_commands(stream: &mut TcpStream, write_to_stream: bool, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>) -> String{
+//     let response = match commands[0].to_uppercase().as_str() {
+//         "SET" => {
+//             local_state.set(&commands)
+//         }
+//         "RPUSH" => {
+//             local_state.rpush(&commands)
+//         }
+//         "LPUSH" => {
+//             local_state.lpush(&commands)
+//         }
+//         "LPOP" => {
+//             local_state.lpop(&commands)
+//         }
+//         "BLPOP" => {
+//             local_state.blpop(&commands).await
+//         }
+//         "XADD" => {
+//             local_state.xadd(&commands)
+//         }
+//         "INCR" => {
+//             local_state.incr(&commands)
+//         }
+//         "MULTI" => {
+//             local_state.multi(client_state)
+//         }
+//         _ => format!("$-1\r\n"), //todo fix
+//     };
+
+//     if write_to_stream && commands[0].to_uppercase().as_str() != "PSYNC" {
+//         stream.write_all(response.as_bytes()).await.unwrap();
+//     }
+
+//     response
+// }
 
 #[tokio::main]
 async fn main() {
@@ -167,7 +166,7 @@ async fn main() {
     let connection_count = Arc::new(AtomicUsize::new(0));
     let mut state = RedisState::new();
 
-    if master_contact.is_some(){
+    if master_contact.is_some(){ // REPLICA
         state.server_state.map.insert("role".to_string(), RedisValue::String("slave".to_string()));
         match master_contact.unwrap().split_once(" "){
             Some((master_ip, master_port)) => {
@@ -205,7 +204,7 @@ async fn main() {
             },
             None => (),
         }
-    } else {
+    } else { // MASTER
         let master_config = vec![
             ("role".to_string(), RedisValue::String("master".to_string())),
             ("master_replid".to_string(), RedisValue::String("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())),
