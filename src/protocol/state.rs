@@ -1,8 +1,9 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, sync::{Arc, Mutex, RwLock}, time::Duration};
+use base64::{Engine, engine::general_purpose};
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
-use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
+use crate::{EMPTY_RDB_FILE, protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {

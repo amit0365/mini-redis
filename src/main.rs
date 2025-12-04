@@ -20,7 +20,16 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
         "PSYNC" => {
             let repl_id = local_state.server_state.map.get("master_replid").unwrap();
             let offset = local_state.server_state.map.get("master_repl_offset").unwrap();
-            format!("+FULLRESYNC {} {}\r\n", repl_id, offset)
+            let fullresync_response = format!("+FULLRESYNC {} {}\r\n", repl_id, offset);
+
+            if write_to_stream {
+                stream.write_all(fullresync_response.as_bytes()).await.unwrap();
+                let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE).unwrap();
+                let rdb_message = [format!("${}\r\n", rdb_bytes.len()).into_bytes(), rdb_bytes].concat();
+                stream.write_all(&rdb_message).await.unwrap();
+            }
+
+            fullresync_response
         }
         "SET" => {
             match commands.iter().skip(3).next() {
@@ -120,7 +129,7 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
         _ => format!("$-1\r\n"), //todo fix
     };
 
-    if write_to_stream{
+    if write_to_stream && commands[0].to_uppercase().as_str() != "PSYNC" {
         stream.write_all(response.as_bytes()).await.unwrap();
     }
 
@@ -185,14 +194,6 @@ async fn main() {
                                         let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
                                         master_stream.write(psync_msg.as_bytes()).await.unwrap();
                                     }
-                                    "+FULLRESYNC" => {
-                                        let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE).unwrap();
-                                        println!("len {}", rdb_bytes.len());
-                                        let mut prefix_bytes = format!("${}\r\n", rdb_bytes.len()).as_bytes().to_vec();
-                                        prefix_bytes.extend(rdb_bytes);
-                                        master_stream.write_all(prefix_bytes.as_slice()).await.unwrap();
-                                    }
-                                    
                                     _ => {}
                                 }
                             },
