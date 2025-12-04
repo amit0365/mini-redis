@@ -162,7 +162,7 @@ async fn main() {
                         Ok(n) => {
                             println!("n {}", n);
                             let buffer_str = from_utf8(&buf[..n]).unwrap().split("\r\n").collect::<Vec<&str>>();;
-                                match buffer_str[0].as_str(){
+                                match buffer_str[0]{
                                     "+PONG" => {
                                         let replconf_msg1 = encode_resp_array(&vec![format!("listening-port {}", port)]);
                                         master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
@@ -171,7 +171,6 @@ async fn main() {
                                     },
                                     _ => {}
                                 }
-                            }
                         },
 
                         Err(_) => (),
