@@ -1,8 +1,11 @@
 use std::{env, str::from_utf8, sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::{encode_resp_array, parse_resp}};
+use base64::{Engine as _, engine::general_purpose};
 mod protocol;
 mod utils;
+
+const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
 
 async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, local_state: &mut RedisState<String, RedisValue>, client_state: &mut ClientState<String, String>, client_add: String, commands: &Vec<String>) -> String{
     let response = match commands[0].to_uppercase().as_str() {
@@ -190,6 +193,11 @@ async fn main() {
                             Err(_) => (),
                         }
                     }
+
+                    let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE).unwrap();
+                    let mut prefix_bytes = format!("${}\r\n", rdb_bytes.len()).as_bytes().to_vec();
+                    prefix_bytes.extend(rdb_bytes);
+                    master_stream.write_all(prefix_bytes.as_slice()).await.unwrap();
                 });
             },
             None => (),
@@ -260,7 +268,6 @@ async fn main() {
                                                     let response = format!("-ERR Can't execute '{}' in subscribed mode\r\n", commands[0].to_lowercase());
                                                     stream.write_all(response.as_bytes()).await.unwrap()
                                                 }
-                        
                                             }
                                         }
                                     }
