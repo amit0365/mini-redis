@@ -186,6 +186,7 @@ async fn main() {
                                         master_stream.write(psync_msg.as_bytes()).await.unwrap();
 
                                         let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE).unwrap();
+                                        println!("len {}", rdb_bytes.len());
                                         let mut prefix_bytes = format!("${}\r\n", rdb_bytes.len()).as_bytes().to_vec();
                                         prefix_bytes.extend(rdb_bytes);
                                         master_stream.write_all(prefix_bytes.as_slice()).await.unwrap();
