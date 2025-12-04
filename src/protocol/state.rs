@@ -35,11 +35,6 @@ impl ServerState<String, RedisValue>{
     fn new() ->Self{
         ServerState { map: HashMap::new() }
     }
-
-    fn new_with_pairs(pairs: &Vec<(String, String)>) -> Self{
-        let map = pairs.iter().map(|(k, v)| (k.to_owned(), RedisValue::String(v.to_owned()))).collect::<HashMap<_, _>>();
-        ServerState { map }
-    }
 }
 
 pub struct ClientState<K, V>{

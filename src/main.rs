@@ -151,6 +151,8 @@ async fn main() {
         state.server_state.map.insert("role".to_string(), RedisValue::String("slave".to_string()));
     } else {
         state.server_state.map.insert("role".to_string(), RedisValue::String("master".to_string()));
+        state.server_state.map.insert("master_replid".to_string(), RedisValue::String("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()));
+        state.server_state.map.insert("master_repl_offset".to_string(), RedisValue::Number(0));
     }
     
     loop {
