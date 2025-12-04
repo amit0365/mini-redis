@@ -11,6 +11,9 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
             let message = &commands[1]; //multiple arg will fail like hello world. check to use .join("")
             format!("${}\r\n{}\r\n", message.len(), message)
         }
+        "REPLCONF" => {
+            format!("+OK\r\n")
+        }
         "SET" => {
             match commands.iter().skip(3).next() {
                 Some(str) => {
