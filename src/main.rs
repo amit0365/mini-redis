@@ -161,6 +161,7 @@ async fn main() {
         }
 
     } else {
+        println!("change_master");
         let master_config = vec![
             ("role".to_string(), RedisValue::String("master".to_string())),
             ("master_replid".to_string(), RedisValue::String("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())),
