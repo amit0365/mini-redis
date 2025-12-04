@@ -151,7 +151,7 @@ async fn main() {
         state.server_state.map.insert("role".to_string(), RedisValue::String("slave".to_string()));
         match master_contact.unwrap().split_once(" "){
             Some((master_ip, master_port)) => {
-                let mut master_stream = TcpStream::connect(format!("{}", master_ip)).await.unwrap();
+                let mut master_stream = TcpStream::connect(format!("{}:{}", master_ip, master_port)).await.unwrap();
                 tokio::spawn(async move {
                     master_stream.write(format!("$4\r\n{}\r\n", "PING".to_string()).as_bytes()).await.unwrap()
                 });
