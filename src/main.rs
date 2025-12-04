@@ -223,7 +223,7 @@ async fn main() {
 
         let cc = connection_count.clone();
         tokio::spawn(async move {
-            let mut client_state = ClientState::new(addr.to_string());
+            let mut client_state = ClientState::new();
             
             loop {
                 if client_state.is_subscribe_mode(){
@@ -284,6 +284,7 @@ async fn main() {
                             },
 
                             bytes_read = stream.read(&mut buf) => {
+                                println!("read_stream_replica");
                                 match bytes_read {
                                     Ok(0) => break,
                                     Ok(n) => {

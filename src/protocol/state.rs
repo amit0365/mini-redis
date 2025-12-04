@@ -120,7 +120,6 @@ impl ServerState<String, RedisValue>{
 }
 
 pub struct ClientState<K, V>{
-    pub addr: String,
     queued_state: QueuedState<K, V>,
     subscription_state: SubscriptionState<K, V>,
     replication_state: ReplicationState<K, V>,
@@ -258,9 +257,8 @@ impl<K, V> QueuedState<K, V> {
 }
 
 impl ClientState<String, String>{
-    pub fn new(addr: String) -> Self{
+    pub fn new() -> Self{
         ClientState {
-            addr,
             queued_state: QueuedState::new(),
             subscription_state: SubscriptionState::new(),
             replication_state: ReplicationState::new(),
