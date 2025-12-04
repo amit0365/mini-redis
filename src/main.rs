@@ -21,8 +21,9 @@ async fn execute_commands_normal(stream: &mut TcpStream, write_to_stream: bool, 
                 stream.write_all(&rdb_message).await.unwrap();
             }
 
-            for comand in &local_state.server_state.write_commands{
-                stream.write_all(comand.as_string().unwrap().as_bytes()).await.unwrap();
+            for command in &local_state.server_state.write_commands{
+                println!("cmd {}", command);
+                stream.write_all(command.as_string().unwrap().as_bytes()).await.unwrap();
             }
 
             format!("") // send empty string since we dont write to stream
