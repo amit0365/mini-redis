@@ -580,6 +580,26 @@ impl RedisState<String, RedisValue>{
             receiver
         };
 
+        // Re-check the list after adding to waiters to avoid race condition
+        // where RPUSH adds item between our first check and adding to waiters
+        // {
+        //     let mut list_guard = self.list_state().list.lock().unwrap();
+        //     if let Some(list) = list_guard.get_mut(key){
+        //         if let Some(data) = list.pop_front(){
+        //             // Remove ourselves from waiters since we got the item directly
+        //             let mut waiters_guard = self.list_state().waiters.lock().unwrap();
+        //             if let Some(queue) = waiters_guard.get_mut(key){
+        //                 // Remove the last sender we just added
+        //                 queue.pop_back();
+        //             }
+
+        //             if let Some(val) = data.as_string(){
+        //                 return encode_resp_array(&vec![key.clone(), val.clone()])
+        //             }
+        //         }
+        //     }
+        // }
+
         let timeout: f64 = commands.last().unwrap().parse().unwrap(); // yo check this
         if timeout == 0.0 {
             match receiver.recv().await{
@@ -601,7 +621,7 @@ impl RedisState<String, RedisValue>{
                 }
 
                 _ = sleep(Duration::from_secs_f64(timeout)) => {
-                    format!("*-1\r\n") 
+                    format!("*-1\r\n")
                 }
             }
         }

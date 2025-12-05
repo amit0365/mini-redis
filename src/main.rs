@@ -21,8 +21,7 @@ async fn execute_commands_normal(
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
             if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
-                let response = "REPLCONF ACK 0".to_string();
-                format!("{}\r\n{}\r\n", response.len(), response)
+                encode_resp_array(&vec!["REPLCONF".to_string(), "ACK".to_string(), "0".to_string()])
             } else {
                 format!("+OK\r\n")
             }
@@ -166,9 +165,12 @@ async fn main() {
                 
                 tokio::spawn(async move {
                     let mut handshake_complete = false;
+                    let mut expecting_rdb = false;
                     let mut local_state = replica_state;
                     let mut local_replicas_state = replica_replicas_state;
                     let mut client_state = ClientState::new();
+                    client_state.set_replica(true); // Mark this connection as a replica
+                    let mut replconf_ack_count = 0;
 
                     let ping_msg = encode_resp_array(&vec!["PING".to_string()]);
                     master_stream.write(ping_msg.as_bytes()).await.unwrap();
@@ -179,7 +181,53 @@ async fn main() {
                             Ok(0) => (),
                             Ok(n) => {
                                 if !handshake_complete{
-                                    if let Ok(buffer_str) = from_utf8(&buf[..n]) {
+                                    println!("handshake incomplete");
+                                    // Check if we're expecting RDB after receiving FULLRESYNC
+                                    if expecting_rdb {
+                                        println!("Receiving RDB file");
+                                        // Parse the RDB: $<size>\r\n<binary data>
+                                        if buf[0] == b'$' {
+                                            if let Some(size_end) = buf[..n].windows(2).position(|w| w == b"\r\n") {
+                                                let size_str = from_utf8(&buf[1..size_end]).ok();
+                                                if let Some(size_str) = size_str {
+                                                    if let Ok(rdb_size) = size_str.parse::<usize>() {
+                                                        let rdb_data_start = size_end + 2;
+                                                        let rdb_end = rdb_data_start + rdb_size;
+
+                                                        if rdb_end <= n {
+                                                            // RDB fully received
+                                                            println!("RDB file fully received, handshake complete");
+                                                            handshake_complete = true;
+                                                            expecting_rdb = false;
+
+                                                            // Check if there are commands after RDB
+                                                            if rdb_end < n {
+                                                                println!("Found commands after RDB, parsing from byte {}", rdb_end);
+                                                                let all_commands = parse_multiple_resp(&buf[rdb_end..n]);
+                                                                println!("cmds after RDB: {:?}", all_commands);
+                                                                for commands in all_commands {
+                                                                    let response = execute_commands_normal(
+                                                                        &mut master_stream,
+                                                                        false,
+                                                                        &mut local_state,
+                                                                        &mut client_state,
+                                                                        &mut local_replicas_state,
+                                                                        "master".to_string(),
+                                                                        &commands
+                                                                    ).await;
+
+                                                                    if commands[0].to_uppercase() == "REPLCONF" && commands.len() >= 2 && commands[1].to_uppercase() == "GETACK" {
+                                                                        println!("Sending REPLCONF ACK response: {}", response);
+                                                                        master_stream.write_all(response.as_bytes()).await.unwrap();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if let Ok(buffer_str) = from_utf8(&buf[..n]) {
                                         let parts: Vec<&str> = buffer_str.split("\r\n").collect();
                                         match parts[0]{
                                             "+PONG" => {
@@ -190,28 +238,101 @@ async fn main() {
                                             },
 
                                             "+OK" => {
-                                                println!("send psync");
-                                                let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
-                                                master_stream.write(psync_msg.as_bytes()).await.unwrap();
+                                                replconf_ack_count += 1;
+                                                // Only send PSYNC after receiving both REPLCONF acknowledgments
+                                                if replconf_ack_count == 2 {
+                                                    println!("send psync");
+                                                    let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
+                                                    master_stream.write(psync_msg.as_bytes()).await.unwrap();
+                                                }
                                             }
 
-                                            _ => ()
+                                            _ => {
+                                                // Check if this is a FULLRESYNC response
+                                                if parts[0].starts_with("+FULLRESYNC") {
+                                                    println!("received full resync");
+                                                    // Don't set handshake_complete yet - wait for RDB
+                                                    expecting_rdb = true;
+                                                }
+                                            }
                                         }
-                                    } else { // +FULLRESYNC followed by RDB data
-                                        handshake_complete = true
+                                    } else { // +FULLRESYNC followed by RDB data or just RDB data
+                                        println!("handshake complete - received binary RDB data");
+                                        handshake_complete = true;
+
+                                        // Buffer could be: "+FULLRESYNC...\r\n$88\r\n[RDB][optional commands]"
+                                        // or just: "$88\r\n[RDB][optional commands]"
+                                        // Find where the RDB file descriptor starts (the $ character)
+                                        let mut rdb_start = 0;
+                                        if buf[0] == b'+' {
+                                            // Skip the +FULLRESYNC line
+                                            if let Some(pos) = buf[..n].windows(2).position(|w| w == b"\r\n") {
+                                                rdb_start = pos + 2; // Skip \r\n
+                                            }
+                                        }
+
+                                        // Now parse the RDB file: $<size>\r\n<binary data>
+                                        if rdb_start < n && buf[rdb_start] == b'$' {
+                                            // Find the end of the size line
+                                            if let Some(size_end) = buf[rdb_start..n].windows(2).position(|w| w == b"\r\n") {
+                                                let size_end = rdb_start + size_end;
+                                                let size_str = from_utf8(&buf[rdb_start + 1..size_end]).ok();
+                                                if let Some(size_str) = size_str {
+                                                    if let Ok(rdb_size) = size_str.parse::<usize>() {
+                                                        let rdb_data_start = size_end + 2; // +2 for \r\n
+                                                        let rdb_end = rdb_data_start + rdb_size;
+
+                                                        if rdb_end < n {
+                                                            // There's more data after RDB, parse it as commands
+                                                            println!("Found commands after RDB, parsing from byte {}", rdb_end);
+                                                            let all_commands = parse_multiple_resp(&buf[rdb_end..n]);
+                                                            println!("cmds after RDB: {:?}", all_commands);
+                                                            for commands in all_commands {
+                                                                let response = execute_commands_normal(
+                                                                    &mut master_stream,
+                                                                    false,
+                                                                    &mut local_state,
+                                                                    &mut client_state,
+                                                                    &mut local_replicas_state,
+                                                                    "master".to_string(),
+                                                                    &commands
+                                                                ).await;
+
+                                                                // For REPLCONF GETACK, we need to write response back
+                                                                if commands[0].to_uppercase() == "REPLCONF" && commands.len() >= 2 && commands[1].to_uppercase() == "GETACK" {
+                                                                    println!("Sending REPLCONF ACK response: {}", response);
+                                                                    master_stream.write_all(response.as_bytes()).await.unwrap();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 } else {
                                     let all_commands = parse_multiple_resp(&buf[..n]);
                                     for commands in all_commands {
-                                        let _ = execute_commands_normal(
+                                        // Check if this is REPLCONF GETACK - if so, we need to respond
+                                        let should_respond = commands.len() >= 2 &&
+                                                            commands[0].to_uppercase() == "REPLCONF" &&
+                                                            commands[1].to_uppercase() == "GETACK";
+
+                                        let response = execute_commands_normal(
                                             &mut master_stream,
-                                            false, // Don't write response back to master
+                                            false, // Don't write response back automatically
                                             &mut local_state,
                                             &mut client_state,
                                             &mut local_replicas_state,
                                             "master".to_string(),
                                             &commands
                                         ).await;
+
+                                        // Manually write response for REPLCONF GETACK
+                                        if should_respond {
+                                            println!("Sending REPLCONF ACK response: {}", response);
+                                            master_stream.write_all(response.as_bytes()).await.unwrap();
+                                        }
                                     }
                                 }
                             },
