@@ -19,7 +19,14 @@ async fn execute_commands_normal(
     let response = match commands[0].to_uppercase().as_str() {
         "PING" => format!("+PONG\r\n"),
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
-        "REPLCONF" => format!("+OK\r\n"),
+        "REPLCONF" => {
+            if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
+                let response = "REPLCONF ACK 0".to_string();
+                format!("{}\r\n{}\r\n", response.len(), response)
+            } else {
+                format!("+OK\r\n")
+            }
+        },
         "PSYNC" => {
             let full_sync_response = local_state.psync();
             if write_to_stream {
@@ -149,7 +156,7 @@ async fn main() {
     let mut state = RedisState::new();
     let replicas_state = ReplicasState::new();
 
-    if master_contact.is_some(){ // REPLICA
+    if master_contact.is_some(){ // REPLICA HANDSHAKE CONNECTION
         state.server_state_mut().map_mut().insert("role".to_string(), RedisValue::String("slave".to_string()));
         match master_contact.unwrap().split_once(" "){
             Some((master_ip, master_port)) => {
