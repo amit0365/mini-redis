@@ -190,6 +190,7 @@ async fn main() {
                                             },
 
                                             "+OK" => {
+                                                println!("send psync");
                                                 let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
                                                 master_stream.write(psync_msg.as_bytes()).await.unwrap();
                                             }
