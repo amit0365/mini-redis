@@ -1,34 +1,116 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/d2d0b57a-1b57-4004-a700-c739253a27ed)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# codecrafters-redis-rust
 
-This is a starting point for Rust solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+A Redis-like server implementation written in Rust using async/await with Tokio. This project implements a subset of Redis's functionality, focusing on core commands, data structures, replication, and pub/sub.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+This implementation supports the following Redis commands:
 
-# Passing the first stage
+- **String:** `SET`, `GET`, `INCR`
+- **List:** `LPUSH`, `RPUSH`, `LRANGE`, `LLEN`, `LPOP`, `BLPOP`
+- **Stream:** `XADD`, `XRANGE`, `XREAD`
+- **Transactions:** `MULTI`, `EXEC`, `DISCARD`
+- **Pub/Sub:** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`
+- **Connection:** `PING`, `ECHO`
+- **Server:** `INFO`, `TYPE`
+- **Replication:** `REPLCONF`, `PSYNC` (master-replica replication)
 
-The entry point for your Redis implementation is in `src/main.rs`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+## Architecture
+
+- Built with **Tokio** for async I/O and runtime
+- Supports concurrent client connections (up to 10,000)
+- Implements master-replica replication
+- Pub/Sub messaging with channel-based communication
+- Transaction support with command queueing
+
+## Getting Started
+
+### Prerequisites
+
+- Rust 1.70 or higher
+- Cargo (comes with Rust)
+
+### Building
+
+To build the server, clone the repository and run:
 
 ```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+cargo build --release
 ```
 
-That's all!
+### Running the Server
 
-# Stage 2 & beyond
+Run the server using:
 
-Note: This section is for stages 2 and beyond.
+```sh
+cargo run --release -- [--port <port>] [--replicaof <master_host> <master_port>]
+```
 
-1. Ensure you have `cargo (1.91)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+Or run the pre-built binary:
+
+```sh
+./target/release/codecrafters-redis [--port <port>] [--replicaof <master_host> <master_port>]
+```
+
+**Options:**
+- `--port`: The port to listen on (default: `6379`)
+- `--replicaof`: Configure as a replica of the specified master (format: `<host> <port>`)
+
+**Examples:**
+
+```sh
+# Run as master on default port 6379
+cargo run --release
+
+# Run as master on custom port
+cargo run --release -- --port 6380
+
+# Run as replica
+cargo run --release -- --port 6380 --replicaof 127.0.0.1 6379
+```
+
+## Usage
+
+Connect to the server using any Redis client such as `redis-cli`:
+
+```sh
+redis-cli -p 6379
+```
+
+Once connected, you can use any of the supported commands:
+
+```redis
+SET mykey "Hello"
+GET mykey
+INCR counter
+LPUSH mylist "item1" "item2"
+XADD stream:1 * field1 value1
+MULTI
+SET key1 val1
+SET key2 val2
+EXEC
+SUBSCRIBE channel1
+PUBLISH channel1 "message"
+```
+
+## Development
+
+The project structure:
+
+- `src/main.rs` - Main server implementation and command execution
+- `src/protocol/` - Redis protocol parsing and state management
+- `src/utils.rs` - RESP protocol encoding/decoding utilities
+
+### Running in Development
+
+```sh
+cargo run -- --port 6379
+```
+
+### Testing
+
+The project uses CodeCrafters for testing. To run tests:
+
+```sh
+./your_program.sh
+```

@@ -1,6 +1,6 @@
 use std::{env, str::from_utf8, sync::{Arc, atomic::{AtomicUsize, Ordering}}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::mpsc};
-use crate::{protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::{encode_resp_array, parse_resp}};
+use crate::{protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::{encode_resp_array, parse_resp, parse_multiple_resp}};
 use base64::{Engine as _, engine::general_purpose};
 mod protocol;
 mod utils;
@@ -154,7 +154,15 @@ async fn main() {
         match master_contact.unwrap().split_once(" "){
             Some((master_ip, master_port)) => {
                 let mut master_stream = TcpStream::connect(format!("{}:{}", master_ip, master_port)).await.unwrap();
+                let replica_state = state.clone();
+                let replica_replicas_state = replicas_state.clone();
+                
                 tokio::spawn(async move {
+                    let mut handshake_complete = false;
+                    let mut local_state = replica_state;
+                    let mut local_replicas_state = replica_replicas_state;
+                    let mut client_state = ClientState::new();
+
                     let ping_msg = encode_resp_array(&vec!["PING".to_string()]);
                     master_stream.write(ping_msg.as_bytes()).await.unwrap();
 
@@ -163,29 +171,39 @@ async fn main() {
                         match master_stream.read(&mut buf).await {
                             Ok(0) => (),
                             Ok(n) => {
-                                if let Ok(buffer_str) = from_utf8(&buf[..n]) {
-                                    let parts: Vec<&str> = buffer_str.split("\r\n").collect();
-                                    match parts[0]{
-                                        "+PONG" => {
-                                            let replconf_msg1 = encode_resp_array(&vec!["REPLCONF".to_string(), "listening-port".to_string(), port.to_owned()]);
-                                            master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
-                                            let replconf_msg2 = encode_resp_array(&vec!["REPLCONF".to_string(), "capa".to_string(), "psync2".to_string()]);
-                                            master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
-                                        },
+                                if !handshake_complete{
+                                    if let Ok(buffer_str) = from_utf8(&buf[..n]) {
+                                        let parts: Vec<&str> = buffer_str.split("\r\n").collect();
+                                        match parts[0]{
+                                            "+PONG" => {
+                                                let replconf_msg1 = encode_resp_array(&vec!["REPLCONF".to_string(), "listening-port".to_string(), port.to_owned()]);
+                                                master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
+                                                let replconf_msg2 = encode_resp_array(&vec!["REPLCONF".to_string(), "capa".to_string(), "psync2".to_string()]);
+                                                master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
+                                            },
 
-                                        "+OK" => {
-                                            let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
-                                            master_stream.write(psync_msg.as_bytes()).await.unwrap();
+                                            "+OK" => {
+                                                let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
+                                                master_stream.write(psync_msg.as_bytes()).await.unwrap();
+                                            }
+
+                                            _ => ()
                                         }
-
-                                        _ => ()
+                                    } else { // +FULLRESYNC followed by RDB data
+                                        handshake_complete = true
                                     }
                                 } else {
-                                    // Buffer contains binary data (likely RDB file mixed with FULLRESYNC)
-                                    // Check if it starts with +FULLRESYNC by looking at raw bytes
-                                    if buf[0] == b'+' {
-                                        // This is likely +FULLRESYNC followed by RDB data
-                                        // Just consume it and reset the flag
+                                    let all_commands = parse_multiple_resp(&buf[..n]);
+                                    for commands in all_commands {
+                                        let _ = execute_commands_normal(
+                                            &mut master_stream,
+                                            false, // Don't write response back to master
+                                            &mut local_state,
+                                            &mut client_state,
+                                            &mut local_replicas_state,
+                                            "master".to_string(),
+                                            &commands
+                                        ).await;
                                     }
                                 }
                             },
@@ -284,7 +302,6 @@ async fn main() {
                             },
 
                             bytes_read = stream.read(&mut buf) => {
-                                println!("read_stream_replica");
                                 match bytes_read {
                                     Ok(0) => break,
                                     Ok(n) => {
