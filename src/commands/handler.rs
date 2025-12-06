@@ -44,7 +44,7 @@ pub async fn execute_commands_normal(
             local_state.server_state_mut().set_replication_mode(true);
             format!("") // send empty string since we dont write to stream
         }
-        "WAIT" => format!(":0\r\n"),
+        "WAIT" => format!(":{}\r\n", replicas_state.num_connected_replicas()),
         "SET" => {
             local_state.set(&commands)
         }

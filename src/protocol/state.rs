@@ -94,14 +94,23 @@ impl<K, V> ServerState<K, V> {
 
 #[derive(Clone)]
 pub struct ReplicasState{
+    num_connected_replicas: Arc<RwLock<usize>>,
     replica_senders: Arc<Mutex<Vec<Sender<Vec<String>>>>>
 }
 
 impl ReplicasState {
     pub fn new() -> Self {
         ReplicasState {
+            num_connected_replicas: Arc::new(RwLock::new(0)),
             replica_senders: Arc::new(Mutex::new(Vec::new()))
         }
+    }
+
+    pub fn num_connected_replicas(&self) -> usize {
+        *self.num_connected_replicas.read().unwrap()
+    }
+    pub fn increment_num_connected_replicas(&mut self){
+       *self.num_connected_replicas.write().unwrap() += 1;
     }
 
     pub fn replica_senders(&self) -> &Arc<Mutex<Vec<Sender<Vec<String>>>>> {
