@@ -117,8 +117,6 @@ pub async fn handle_handshake(
             ).await;
         }
     }
-
-    local_replicas_state.increment_num_connected_replicas();
 }
 
 pub async fn handle_replication_commands(
