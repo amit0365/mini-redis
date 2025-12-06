@@ -1,6 +1,39 @@
 use serde_json::Value;
+use std::str::from_utf8;
 
 use crate::protocol::RedisValue;
+
+pub struct ServerConfig {
+    pub port: String,
+    pub master_contact_for_slave: Option<String>,
+}
+
+impl ServerConfig {
+    pub fn parse_from_args(args: Vec<String>) -> Self {
+        let mut port = "6379".to_string();
+        let mut master_contact_for_slave: Option<String> = None;
+
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--port" => {
+                    port = args[i + 1].to_owned();
+                    i += 2;
+                },
+                "--replicaof" => {
+                    master_contact_for_slave = Some(args[i + 1].to_owned());
+                    i += 2;
+                },
+                _ => i += 1,
+            }
+        }
+
+        ServerConfig {
+            port,
+            master_contact_for_slave,
+        }
+    }
+}
 
 pub fn collect_as_strings<I>(iter: I) -> Vec<String>
     where 
@@ -143,4 +176,24 @@ pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<String>> {
     }
 
     result
+}
+
+pub fn parse_rdb_with_trailing_commands(
+    buf: &[u8],
+    rdb_start: usize,
+) -> Option<usize> {
+    if rdb_start >= buf.len() || buf[rdb_start] != b'$' {
+        return None;
+    }
+
+    let size_end = buf[rdb_start..].windows(2).position(|w| w == b"\r\n")?;
+    let size_end = rdb_start + size_end;
+
+    let size_str = from_utf8(&buf[rdb_start + 1..size_end]).ok()?;
+    let rdb_size = size_str.parse::<usize>().ok()?;
+
+    let rdb_data_start = size_end + 2;
+    let rdb_end = rdb_data_start + rdb_size;
+
+    Some(rdb_end)
 }
