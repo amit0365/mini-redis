@@ -32,6 +32,8 @@ pub async fn process_commands_from_master(
         if is_getack {
             master_stream.write_all(response.as_bytes()).await.unwrap();
         }
+
+        client_state.add_num_bytes_synced(encode_resp_array(&commands).len()); //todo fix extra work reencoding again just for length
     }
 }
 

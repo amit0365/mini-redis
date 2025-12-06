@@ -19,7 +19,7 @@ pub async fn execute_commands_normal(
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
             if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
-                encode_resp_array(&vec!["REPLCONF".to_string(), "ACK".to_string(), "0".to_string()])
+                encode_resp_array(&vec!["REPLCONF".to_string(), "ACK".to_string(), client_state.num_bytes_synced().to_string()])
             } else {
                 format!("+OK\r\n")
             }

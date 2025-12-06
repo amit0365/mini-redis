@@ -21,6 +21,7 @@ pub async fn handle_replica_mode(
                 true
             },
 
+            //master reading from replica?
             bytes_read = stream.read(buf) => {
                 match bytes_read {
                     Ok(0) => false,

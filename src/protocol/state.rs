@@ -178,6 +178,7 @@ impl<K, V> SubscriptionState<K, V> {
 
 pub struct ReplicationState<K, V>{
     is_replica: bool,
+    num_bytes_synced: usize,
     receiver: Option<Receiver<Vec<V>>>,
     _phantom: PhantomData<K>
 }
@@ -186,6 +187,7 @@ impl<K, V> ReplicationState<K, V> {
     fn new() -> Self {
         ReplicationState {
             is_replica: false,
+            num_bytes_synced: 0,
             receiver: None,
             _phantom: PhantomData,
         }
@@ -197,6 +199,14 @@ impl<K, V> ReplicationState<K, V> {
 
     pub fn set_replica(&mut self, is_replica: bool) {
         self.is_replica = is_replica;
+    }
+
+    pub fn num_bytes_synced(&self) -> usize{
+        self.num_bytes_synced
+    }
+
+    pub fn add_num_bytes_synced(&mut self, n :usize){
+        self.num_bytes_synced += n;
     }
 
     pub fn get_receiver_mut(&mut self) -> Option<&mut Receiver<Vec<V>>> {
@@ -342,6 +352,14 @@ impl ClientState<String, String>{
 
     pub fn set_replica(&mut self, is_replica: bool) {
         self.replication_state.set_replica(is_replica);
+    }
+
+    pub fn num_bytes_synced(&self) -> usize {
+        self.replication_state.num_bytes_synced()
+    }
+
+    pub fn add_num_bytes_synced(&mut self, n :usize){
+        self.replication_state.add_num_bytes_synced(n);
     }
 
     pub fn set_replica_receiver(&mut self, receiver: Receiver<Vec<String>>){
