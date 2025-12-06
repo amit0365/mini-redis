@@ -1,3 +1,5 @@
+use std::fmt::format;
+
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
@@ -42,6 +44,7 @@ pub async fn execute_commands_normal(
             local_state.server_state_mut().set_replication_mode(true);
             format!("") // send empty string since we dont write to stream
         }
+        "WAIT" => format!("0"),
         "SET" => {
             local_state.set(&commands)
         }

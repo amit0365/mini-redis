@@ -25,7 +25,7 @@ pub async fn process_commands_from_master(
             local_state,
             client_state,
             local_replicas_state,
-            "master".to_string(),
+            "master".to_string(), //todo fix this properly
             &commands
         ).await;
 
