@@ -95,25 +95,42 @@ impl<K, V> ServerState<K, V> {
 #[derive(Clone)]
 pub struct ReplicasState{
     num_connected_replicas: Arc<RwLock<usize>>,
-    replica_senders: Arc<Mutex<Vec<Sender<Vec<String>>>>>
+    replica_offsets: HashMap<String, usize>,
+    master_write_offset: Arc<RwLock<usize>>,
+    replica_senders: Arc<Mutex<HashMap<String, Sender<Vec<String>>>>>
 }
 
 impl ReplicasState {
     pub fn new() -> Self {
         ReplicasState {
             num_connected_replicas: Arc::new(RwLock::new(0)),
-            replica_senders: Arc::new(Mutex::new(Vec::new()))
+            replica_offsets: HashMap::new(),
+            master_write_offset: Arc::new(RwLock::new(0)),
+            replica_senders: Arc::new(Mutex::new(HashMap::new()))
         }
+    }
+
+    pub fn increment_master_write_offset(&mut self, n: usize){
+       *self.master_write_offset.write().unwrap() += n;
     }
 
     pub fn num_connected_replicas(&self) -> usize {
         *self.num_connected_replicas.read().unwrap()
     }
+
+    pub fn get_replica_offsets(&self) -> &HashMap<String, usize> {
+        &self.replica_offsets
+    }
+
+    pub fn get_master_write_offset(&self) -> usize {
+        *self.master_write_offset.read().unwrap()
+    }
+
     pub fn increment_num_connected_replicas(&mut self){
        *self.num_connected_replicas.write().unwrap() += 1;
     }
 
-    pub fn replica_senders(&self) -> &Arc<Mutex<Vec<Sender<Vec<String>>>>> {
+    pub fn replica_senders(&self) -> &Arc<Mutex<HashMap<String, Sender<Vec<String>>>>> {
         &self.replica_senders
     }
 }
@@ -186,6 +203,7 @@ impl<K, V> SubscriptionState<K, V> {
 }
 
 pub struct ReplicationState<K, V>{
+    addr: String,
     is_replica: bool,
     num_bytes_synced: usize,
     receiver: Option<Receiver<Vec<V>>>,
@@ -195,11 +213,20 @@ pub struct ReplicationState<K, V>{
 impl<K, V> ReplicationState<K, V> {
     fn new() -> Self {
         ReplicationState {
+            addr: String::new(),
             is_replica: false,
             num_bytes_synced: 0,
             receiver: None,
             _phantom: PhantomData,
         }
+    }
+
+    pub fn get_address(&self) -> &String {
+        &self.addr
+    }
+
+    pub fn set_address(&mut self, addr: String){
+        self.addr = addr;
     }
 
     pub fn is_replica(&self) -> bool {
@@ -282,6 +309,14 @@ impl ClientState<String, String>{
             subscription_state: SubscriptionState::new(),
             replication_state: ReplicationState::new(),
         }
+    }
+
+    pub fn get_address_replica(&self) -> &String {
+        &self.replication_state.get_address()
+    }
+
+    pub fn set_address_replica(&mut self, addr: String){
+        self.replication_state.set_address(addr);
     }
 
     // Delegation methods for SubscriptionState

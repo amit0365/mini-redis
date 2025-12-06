@@ -12,16 +12,17 @@ This implementation supports the following Redis commands:
 - **Transactions:** `MULTI`, `EXEC`, `DISCARD`
 - **Pub/Sub:** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`
 - **Connection:** `PING`, `ECHO`
-- **Server:** `INFO`, `TYPE`
+- **Server:** `INFO`, `TYPE`, `WAIT`
 - **Replication:** `REPLCONF`, `PSYNC` (master-replica replication)
 
 ## Architecture
 
 - Built with **Tokio** for async I/O and runtime
 - Supports concurrent client connections (up to 10,000)
-- Implements master-replica replication
+- Implements master-replica replication with PSYNC and RDB snapshots
 - Pub/Sub messaging with channel-based communication
 - Transaction support with command queueing
+- Rate Limit to max 10,000 concurrent connections
 
 ## Getting Started
 
@@ -95,11 +96,34 @@ PUBLISH channel1 "message"
 
 ## Development
 
-The project structure:
+### Project Structure
 
-- `src/main.rs` - Main server implementation and command execution
-- `src/protocol/` - Redis protocol parsing and state management
-- `src/utils.rs` - RESP protocol encoding/decoding utilities
+The codebase has been refactored into a modular architecture for better maintainability and separation of concerns:
+
+```
+src/
+├── main.rs                      # Server initialization and entry point
+├── protocol/
+│   ├── mod.rs                   # Protocol module exports
+│   ├── state.rs                 # Redis state and server state management
+│   ├── value.rs                 # RedisValue type definitions
+│   └── replication.rs           # Replication handshake and sync logic
+├── commands/
+│   ├── mod.rs                   # Command module exports
+│   └── handler.rs               # Command execution and routing
+├── client/
+│   ├── mod.rs                   # Client module exports
+│   ├── normal_mode.rs           # Standard client connection handling
+│   ├── subscribe_mode.rs        # Pub/Sub client connection handling
+│   └── replica_mode.rs          # Replica-to-master connection handling
+└── utils.rs                     # RESP protocol encoding/decoding utilities
+```
+
+**Key Modules:**
+- **`protocol/`** - Core Redis protocol types, state management, and replication logic
+- **`commands/`** - Command parsing, validation, and execution
+- **`client/`** - Different client connection modes (normal, subscribe, replica)
+- **`utils.rs`** - Low-level RESP protocol utilities and configuration
 
 ### Running in Development
 

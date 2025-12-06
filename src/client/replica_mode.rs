@@ -1,7 +1,7 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::{encode_resp_array, parse_resp};
-use crate::commands::execute_commands_normal;
+use crate::commands::execute_commands;
 
 pub async fn handle_replica_mode(
     stream: &mut TcpStream,
@@ -28,7 +28,7 @@ pub async fn handle_replica_mode(
                     Ok(n) => {
                         let parsed_commands = parse_resp(&buf[..n]);
                         if let Some(commands) = parsed_commands {
-                            let _ = execute_commands_normal(
+                            let _ = execute_commands(
                                 stream,
                                 true,
                                 local_state,

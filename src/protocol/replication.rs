@@ -2,7 +2,7 @@ use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use std::str::from_utf8;
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::{encode_resp_array, parse_multiple_resp, parse_rdb_with_trailing_commands, ServerConfig};
-use crate::commands::execute_commands_normal;
+use crate::commands::execute_commands;
 
 // Helper function to process commands after RDB file during handshake or after handshake complete
 pub async fn process_commands_from_master(
@@ -19,13 +19,13 @@ pub async fn process_commands_from_master(
             && commands[1].to_uppercase() == "GETACK"
             && commands[2].to_string() == "*";
 
-        let response = execute_commands_normal(
+        let response = execute_commands(
             master_stream,
             false,
             local_state,
             client_state,
             local_replicas_state,
-            "master".to_string(), //todo fix this properly
+            "master".to_string(), // todo fix this properly
             &commands
         ).await;
 
@@ -163,6 +163,7 @@ pub async fn initialize_replica_connection(
         let mut local_replicas_state = replicas_state;
         let mut client_state = ClientState::new();
         client_state.set_replica(true);
+        client_state.set_address_replica(port.clone()); // is port good as identifier
         let mut replconf_ack_count = 0;
 
         let ping_msg = encode_resp_array(&vec!["PING".to_string()]);

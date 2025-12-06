@@ -3,6 +3,8 @@ use std::str::from_utf8;
 
 use crate::protocol::RedisValue;
 
+pub const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
+
 pub struct ServerConfig {
     pub port: String,
     pub master_contact_for_slave: Option<String>,

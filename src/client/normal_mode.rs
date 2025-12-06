@@ -1,7 +1,7 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::parse_resp;
-use crate::commands::execute_commands_normal;
+use crate::commands::execute_commands;
 
 pub async fn handle_normal_mode(
     stream: &mut TcpStream,
@@ -44,7 +44,7 @@ async fn handle_multi_mode(
                 0 => stream.write_all(b"*0\r\n").await.unwrap(),
                 _ => {
                     while let Some(queued_command) = client_state.pop_command() {
-                        let response = execute_commands_normal(
+                        let response = execute_commands(
                             stream,
                             false,
                             local_state,
@@ -88,7 +88,7 @@ async fn handle_non_multi_mode(
         "DISCARD" => stream.write_all(b"-ERR DISCARD without MULTI\r\n").await.unwrap(),
 
         _ => {
-            let _ = execute_commands_normal(
+            let _ = execute_commands(
                 stream,
                 true,
                 local_state,

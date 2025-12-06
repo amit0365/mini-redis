@@ -1,13 +1,9 @@
-use std::fmt::format;
-
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
-use crate::utils::encode_resp_array;
+use crate::utils::{encode_resp_array, EMPTY_RDB_FILE};
 
-pub const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
-
-pub async fn execute_commands_normal(
+pub async fn execute_commands(
     stream: &mut TcpStream,
     write_to_stream: bool,
     local_state: &mut RedisState<String, RedisValue>,
@@ -38,69 +34,59 @@ pub async fn execute_commands_normal(
             {
                 let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
                 let (sender, receiver) = mpsc::channel(1);
-                replicas_senders_guard.push(sender);
+                let client_addr = client_state.get_address_replica();
+                replicas_senders_guard.entry(client_addr.to_owned()).insert_entry(sender);
                 client_state.set_replica(true);
                 client_state.set_replica_receiver(receiver);
             }
 
             replicas_state.increment_num_connected_replicas();
             local_state.server_state_mut().set_replication_mode(true);
-            format!("") // send empty string since we dont write to stream
+            format!("") // send empty string since we don't write to stream
         }
-        "WAIT" => format!(":{}\r\n", replicas_state.num_connected_replicas()),
-        "SET" => {
-            local_state.set(&commands)
-        }
-        "GET" => {
-            local_state.get(&commands)
-        }
-        "RPUSH" => {
-            local_state.rpush(&commands)
-        }
-        "LPUSH" => {
-            local_state.lpush(&commands)
-        }
-        "LLEN" => {
-            local_state.llen(&commands)
-        }
-        "LPOP" => {
-            local_state.lpop(&commands)
-        }
-        "BLPOP" => {
-            local_state.blpop(&commands).await
-        }
-        "LRANGE" => {
-            local_state.lrange(&commands[1], &commands[2], &commands[3])
-        }
-        "TYPE" => {
-            local_state.type_command(&commands)
-        }
-        "XADD" => {
-            local_state.xadd(&commands)
-        }
-        "XRANGE" => {
-            local_state.xrange(&commands)
-        }
-        "XREAD" => {
-            local_state.xread(&commands).await
-        }
+        "WAIT" => {
+            let senders = {
+                let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
+                replica_senders_guard.clone()
+            };         
+
+            let master_write_offset = replicas_state.get_master_write_offset();
+            let replicas_write_offset = replicas_state.get_replica_offsets();
+            for (id, sender) in senders{
+                let replica_offset = replicas_write_offset.get(&id).unwrap();
+                if *replica_offset < master_write_offset{
+                    //send getack
+                    //receive repsonse
+                    //update replica offset
+                    //if anyone is fully synced decrement count for the required number of replicas
+                } else {
+                    //increment count as replica already synced
+                }
+            }   
+
+            format!(":{}\r\n", replicas_state.num_connected_replicas())
+        },
+        "SET" => local_state.set(&commands),
+        "GET" => local_state.get(&commands),
+        "RPUSH" => local_state.rpush(&commands),
+        "LPUSH" => local_state.lpush(&commands),
+        "LLEN" => local_state.llen(&commands),
+        "LPOP" => local_state.lpop(&commands),
+        "BLPOP" => local_state.blpop(&commands).await,
+        "LRANGE" => local_state.lrange(&commands[1], &commands[2], &commands[3]),
+        "TYPE" => local_state.type_command(&commands),
+        "XADD" => local_state.xadd(&commands),
+        "XRANGE" => local_state.xrange(&commands),
+        "XREAD" => local_state.xread(&commands).await,
         "SUBSCRIBE" => {
             let count_response = local_state.subscribe(client_state, &client_add,  &commands);
             local_state.handle_subscriber(client_state, &commands).await;
             count_response
         }
-        "PUBLISH" => {
-            local_state.publish(&commands)
-        }
-        "INCR" => {
-            local_state.incr(&commands)
-        }
-        "MULTI" => {
-            local_state.multi(client_state)
-        }
-        "INFO" => {
-            local_state.info(&commands)
-        }
+        "PUBLISH" => local_state.publish(&commands),
+        "INCR" => local_state.incr(&commands),
+        "MULTI" => local_state.multi(client_state),
+        "INFO" => local_state.info(&commands),
         _ => format!("$-1\r\n"), //todo fix
     };
 
@@ -113,14 +99,15 @@ pub async fn execute_commands_normal(
         "SET" | "DEL" | "RPUSH" | "LPUSH" | "LPOP" | "XADD" | "INCR"
     );
 
-    if local_state.server_state().replication_mode() && is_write_command && write_to_stream{
+    if local_state.server_state().replication_mode() && is_write_command && write_to_stream {
+        replicas_state.increment_master_write_offset(encode_resp_array(commands).len());
         let senders = {
             let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
             replica_senders_guard.clone()
         };
 
-        for sender in senders{
-            sender.send(commands.to_vec()).await.unwrap();
+        for (_id, sender) in senders{
+            sender.send(commands.to_vec()).await.unwrap(); // heap allocations
         };
     }
 
