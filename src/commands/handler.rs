@@ -35,12 +35,15 @@ pub async fn execute_commands_normal(
                 stream.write_all(&rdb_message).await.unwrap();
             }
 
-            let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
-            let (sender, receiver) = mpsc::channel(1);
-            replicas_senders_guard.push(sender);
+            {
+                let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
+                let (sender, receiver) = mpsc::channel(1);
+                replicas_senders_guard.push(sender);
+                client_state.set_replica(true);
+                client_state.set_replica_receiver(receiver);
+            }
 
-            client_state.set_replica(true);
-            client_state.set_replica_receiver(receiver);
+            replicas_state.increment_num_connected_replicas();
             local_state.server_state_mut().set_replication_mode(true);
             format!("") // send empty string since we dont write to stream
         }
