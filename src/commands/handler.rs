@@ -9,7 +9,7 @@ pub async fn execute_commands(
     local_state: &mut RedisState<String, RedisValue>,
     client_state: &mut ClientState<String, String>,
     replicas_state: &mut ReplicasState,
-    client_add: String,
+    client_addr: String,
     commands: &Vec<String>
 ) -> String{
     let response = match commands[0].to_uppercase().as_str() {
@@ -34,7 +34,6 @@ pub async fn execute_commands(
             {
                 let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
                 let (sender, receiver) = mpsc::channel(1);
-                let client_addr = client_state.get_address_replica();
                 replicas_senders_guard.entry(client_addr.to_owned()).insert_entry(sender);
                 client_state.set_replica(true);
                 client_state.set_replica_receiver(receiver);
@@ -79,7 +78,7 @@ pub async fn execute_commands(
         "XRANGE" => local_state.xrange(&commands),
         "XREAD" => local_state.xread(&commands).await,
         "SUBSCRIBE" => {
-            let count_response = local_state.subscribe(client_state, &client_add,  &commands);
+            let count_response = local_state.subscribe(client_state, &client_addr,  &commands);
             local_state.handle_subscriber(client_state, &commands).await;
             count_response
         }
