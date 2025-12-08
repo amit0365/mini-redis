@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
@@ -95,14 +96,15 @@ pub async fn execute_commands(
     );
 
     if local_state.server_state().replication_mode() && is_write_command && write_to_stream {
-        replicas_state.increment_master_write_offset(encode_resp_array(commands).len());
+        let encoded = Arc::new(encode_resp_array(commands));
+        replicas_state.increment_master_write_offset(encoded.len());
         let senders = {
             let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
             replica_senders_guard.clone()
         };
 
         for (_id, sender) in senders{
-            sender.send(commands.to_vec()).await.unwrap();
+            sender.send(Arc::clone(&encoded)).await.unwrap();
         };
     }
 

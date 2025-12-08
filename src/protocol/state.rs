@@ -97,7 +97,7 @@ pub struct ReplicasState{
     num_connected_replicas: Arc<RwLock<usize>>,
     replica_offsets: HashMap<String, usize>,
     master_write_offset: Arc<RwLock<usize>>,
-    replica_senders: Arc<Mutex<HashMap<String, Sender<Vec<String>>>>>
+    replica_senders: Arc<Mutex<HashMap<String, Sender<Arc<String>>>>>
 }
 
 impl ReplicasState {
@@ -130,7 +130,7 @@ impl ReplicasState {
        *self.num_connected_replicas.write().unwrap() += 1;
     }
 
-    pub fn replica_senders(&self) -> &Arc<Mutex<HashMap<String, Sender<Vec<String>>>>> {
+    pub fn replica_senders(&self) -> &Arc<Mutex<HashMap<String, Sender<Arc<String>>>>> {
         &self.replica_senders
     }
 }
@@ -208,8 +208,8 @@ pub struct ReplicationState<K, V>{
     addr: String,
     is_replica: bool,
     num_bytes_synced: usize,
-    receiver: Option<Receiver<Vec<V>>>,
-    _phantom: PhantomData<K>
+    receiver: Option<Receiver<Arc<String>>>,
+    _phantom: PhantomData<(K, V)>
 }
 
 impl<K, V> ReplicationState<K, V> {
@@ -247,11 +247,11 @@ impl<K, V> ReplicationState<K, V> {
         self.num_bytes_synced += n;
     }
 
-    pub fn get_receiver_mut(&mut self) -> Option<&mut Receiver<Vec<V>>> {
+    pub fn get_receiver_mut(&mut self) -> Option<&mut Receiver<Arc<String>>> {
         self.receiver.as_mut()
     }
 
-    pub fn set_receiver(&mut self, receiver: Receiver<Vec<V>>) {
+    pub fn set_receiver(&mut self, receiver: Receiver<Arc<String>>) {
         self.receiver = Some(receiver);
     }
 }
@@ -346,7 +346,7 @@ impl ClientState<String, String>{
         self.subscription_state.get_sender()
     }
 
-    pub fn get_replica_receiver_mut(&mut self) -> Option<&mut Receiver<Vec<String>>> {
+    pub fn get_replica_receiver_mut(&mut self) -> Option<&mut Receiver<Arc<String>>> {
         self.replication_state.get_receiver_mut()
     }
 
@@ -408,7 +408,7 @@ impl ClientState<String, String>{
         self.replication_state.add_num_bytes_synced(n);
     }
 
-    pub fn set_replica_receiver(&mut self, receiver: Receiver<Vec<String>>){
+    pub fn set_replica_receiver(&mut self, receiver: Receiver<Arc<String>>){
         self.replication_state.set_receiver(receiver);
     }
 }

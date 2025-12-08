@@ -1,6 +1,6 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
-use crate::utils::{encode_resp_array, parse_resp};
+use crate::utils::parse_resp;
 use crate::commands::execute_commands;
 
 pub async fn handle_replica_mode(
@@ -14,9 +14,8 @@ pub async fn handle_replica_mode(
     if let Some(receiver) = client_state.get_replica_receiver_mut() {
         tokio::select! {
             msg = receiver.recv() => {
-                if let Some(commands) = msg {
-                    let resp_command = encode_resp_array(&commands);
-                    stream.write_all(resp_command.as_bytes()).await.unwrap();
+                if let Some(encoded_resp) = msg {
+                    stream.write_all(encoded_resp.as_bytes()).await.unwrap();
                 }
                 true
             },
