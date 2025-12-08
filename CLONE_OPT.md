@@ -40,10 +40,17 @@ Impact:
 - After: Direct ownership transfer - no clones at all
 - Benefit: Eliminates 3 String clones + 3 deep RedisValue clones during master state initialization
 
-Lines 418, 422: SET command clones
-insert(commands[1].clone(), RedisValue::StringWithTimeout((commands[2].clone(), timeout)))
-Problem: Double cloning of command strings
-Fix: Use slice indexing or swap/take ownership
+Lines 477-478, 484, 488: SET command clones - ✅ FIXED
+Implementation:
+- Clone commands[1] and commands[2] once into local variables (lines 477-478)
+- Move owned values into insert() call instead of cloning at call site
+- Code: `let key = commands[1].clone(); let value = commands[2].clone();`
+- Then: `insert(key, RedisValue::StringWithTimeout((value, timeout)))`
+
+Impact:
+- Before: Double cloning at insert site - commands[1].clone() and commands[2].clone()
+- After: Single clone per string, then move ownership
+- Benefit: Eliminates redundant clones in SET command with PX/EX options
 
 Lines 469, 482, 499, 501, 565, 573, 588, 598, 658, 666: Key and value cloning in list/stream operations
 list_guard.entry(key.clone())
@@ -87,16 +94,21 @@ Line 45: Cloning entire encoded array
 encoded_array.clone()
 Problem: Returns clone of accumulated string buffer
 Fix: Take ownership of the parameter instead of &mut
+
 Optimization Priorities 📊
 High Impact (Do these first):
 Line 831 in state.rs - Pub/Sub message broadcast cloning
 Use Arc<Vec<String>> for messages to share across subscribers
+
 Lines 30-31, 38-39 in value.rs - Stream pair cloning
 Change signature to accept Vec<(String, String)> directly instead of flattened vec
+
 Line 118 in state.rs - Bulk update cloning
 Change to update(&mut self, pairs: Vec<(String, RedisValue)>) and use drain()
+
 Line 109 in main.rs - Replica senders vec clone
 Keep vec in Arc and clone individual senders during iteration
+
 Line 501 in state.rs - LPUSH cloning in loop
 Move items instead of cloning them
 Medium Impact:
@@ -105,5 +117,6 @@ Use to_owned() on the command slice once, store in variable
 StreamValue ID management (lines 157, 208, 235)
 Use String::new() and mutation instead of cloning
 Low Impact (micro-optimizations):
+
 Line 45 utils.rs - Return by move instead of clone
 Command string clones in SET/GET paths

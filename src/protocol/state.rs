@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
-use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_value_array, parse_wrapback}};
+use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_array_str, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -416,7 +416,7 @@ impl ClientState<String, String>{
 #[derive(Clone)]
 pub struct ListState<K, RedisValue>{
     list: Arc<Mutex<HashMap<K, VecDeque<RedisValue>>>>,
-    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,
+    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(Arc<str>, RedisValue)>>>>>,
 }
 
 impl<K> ListState<K, RedisValue>{
@@ -430,7 +430,7 @@ impl<K> ListState<K, RedisValue>{
         &self.list
     }
 
-    pub fn waiters(&self) -> &Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>> {
+    pub fn waiters(&self) -> &Arc<Mutex<HashMap<K, VecDeque<Sender<(Arc<str>, RedisValue)>>>>> {
         &self.waiters
     }
 }
@@ -438,7 +438,7 @@ impl<K> ListState<K, RedisValue>{
 #[derive(Clone)]
 pub struct MapState<K, RedisValue>{
     map: Arc<RwLock<HashMap<K, RedisValue>>>,
-    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>>,
+    waiters: Arc<Mutex<HashMap<K, VecDeque<Sender<(Arc<str>, RedisValue)>>>>>,
 }
 
 impl<K> MapState<K, RedisValue>{
@@ -452,7 +452,7 @@ impl<K> MapState<K, RedisValue>{
         &self.map
     }
 
-    pub fn waiters(&self) -> &Arc<Mutex<HashMap<K, VecDeque<Sender<(K, RedisValue)>>>>> {
+    pub fn waiters(&self) -> &Arc<Mutex<HashMap<K, VecDeque<Sender<(Arc<str>, RedisValue)>>>>> {
         &self.waiters
     }
 }
@@ -537,15 +537,16 @@ impl RedisState<String, RedisValue>{
             .extend(items);
             count = list_guard.get(key).unwrap().len().to_string();
         }
-        
+
         let mut waiters_guard = self.list_state().waiters.lock().unwrap();
         if let Some(waiting_queue) = waiters_guard.get_mut(key){
+            let key_arc: Arc<str> = Arc::from(key.as_str());
             while let Some(sender) = waiting_queue.pop_front(){
                 let mut list_guard = self.list_state().list.lock().unwrap();
                 if let Some(deque) = list_guard.get_mut(key){
                     if let Some(value) = deque.pop_front(){
                         drop(list_guard); // Release lock before sending
-                        match sender.try_send((key.clone(), value)){
+                        match sender.try_send((key_arc.clone(), value)){
                             Ok(_) => break,
                             Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
                             Err(TrySendError::Closed(_)) => continue,
@@ -561,13 +562,15 @@ impl RedisState<String, RedisValue>{
     pub fn lpush(&mut self, commands: &Vec<String>) -> String {
         let mut list_guard = self.list_state().list.lock().unwrap();
         let items = commands.iter().skip(2).map(|v| RedisValue::String(v.to_string())).collect::<Vec<RedisValue>>();
-        for item in items.iter() {
-            list_guard.entry(commands[1].clone())
-            .or_insert(VecDeque::new())
-            .push_front(item.clone());
+        let key = commands[1].clone();
+        let deque = list_guard.entry(key.clone())
+            .or_insert(VecDeque::new());
+
+        for item in items.into_iter() {
+            deque.push_front(item);
         }
-        
-        let count = list_guard.get(&commands[1]).unwrap().len();
+
+        let count = list_guard.get(&key).unwrap().len();
         format!(":{}\r\n", count.to_string())
     } 
 
@@ -628,7 +631,7 @@ impl RedisState<String, RedisValue>{
             if let Some(list) = list_guard.get_mut(key){
                 if let Some(data) = list.pop_front(){
                     if let Some(val) = data.as_string(){
-                        return encode_resp_array(&vec![key.clone(), val.clone()])
+                        return encode_resp_array_str(&[key.as_str(), val])
                     }
                 }
             }
@@ -669,9 +672,9 @@ impl RedisState<String, RedisValue>{
         let timeout: f64 = commands.last().unwrap().parse().unwrap(); // yo check this
         if timeout == 0.0 {
             match receiver.recv().await{
-                Some((key, value)) => {
+                Some((key_arc, value)) => {
                     if let Some(val) = value.as_string(){
-                        encode_resp_array(&vec![key, val.clone()])
+                        encode_resp_array_str(&[key_arc.as_ref(), val])
                     } else {format!("$\r\n")} //fix this
                 }
                 None => format!("$\r\n"), //todo fix this
@@ -679,9 +682,9 @@ impl RedisState<String, RedisValue>{
         } else {
             tokio::select! {
                 result = receiver.recv() => {
-                    if let Some((key, value)) = result{
+                    if let Some((key_arc, value)) = result{
                         if let Some(val) = value.as_string(){
-                            encode_resp_array(&vec![key, val.clone()])
+                            encode_resp_array_str(&[key_arc.as_ref(), val])
                         } else {format!("$\r\n")} //fix this
                     } else {format!("*-1\r\n")} // none so disconnected or dropped
                 }
@@ -761,8 +764,9 @@ impl RedisState<String, RedisValue>{
             let mut map_waiters_guard = self.map_state().waiters.lock().unwrap();
             if let Some(waiters_queue) = map_waiters_guard.get_mut(key){
                 let stream_value = StreamValue::new_blocked(Arc::from(commands[2].as_str()), &pairs);
+                let key_arc: Arc<str> = Arc::from(key.as_str());
                 while let Some(waiter) = waiters_queue.pop_front(){
-                    match waiter.try_send((key.clone(), RedisValue::Stream(stream_value.clone()))){
+                    match waiter.try_send((key_arc.clone(), RedisValue::Stream(stream_value.clone()))){
                         Ok(_) => break,
                         Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
                         Err(TrySendError::Closed(_)) => continue,
@@ -829,10 +833,10 @@ impl RedisState<String, RedisValue>{
 
                 if *timeout == 0 {
                     match receiver.recv().await{
-                        Some((key, redis_val)) => {
+                        Some((key_arc, redis_val)) => {
                             if let Some(value_array) = redis_val.get_blocked_result(){
                                 let mut encoded_array = String::new();
-                                encode_resp_value_array(&mut encoded_array, &vec![json!([key, value_array])]);
+                                encode_resp_value_array(&mut encoded_array, &vec![json!([key_arc.as_ref(), value_array])]);
                                 return encoded_array
                             }
                             format!("*-1\r\n")
@@ -842,16 +846,16 @@ impl RedisState<String, RedisValue>{
                 } else {
                     tokio::select! {
                         result = receiver.recv() => {
-                            if let Some((key, redis_val)) = result {
+                            if let Some((key_arc, redis_val)) = result {
                                 if let Some(value_array) = redis_val.get_blocked_result(){
                                     let mut encoded_array = String::new();
-                                    encode_resp_value_array(&mut encoded_array, &vec![json!([key, value_array])]);
+                                    encode_resp_value_array(&mut encoded_array, &vec![json!([key_arc.as_ref(), value_array])]);
                                     return encoded_array
                                 }
-                                format!("*-1\r\n")  
+                                format!("*-1\r\n")
                             } else {format!("*-1\r\n")}
                         },
-    
+
                         _ = sleep(Duration::from_millis(*timeout)) => {
                             format!("*-1\r\n")
                         },

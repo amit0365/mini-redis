@@ -1,4 +1,4 @@
-# mini-redi
+# mini-redis
 
 A Redis-like server implementation written in Rust using async/await with Tokio. This project implements a subset of Redis's functionality, focusing on core commands, data structures, replication, and pub/sub.
 
