@@ -43,24 +43,20 @@ pub async fn execute_commands(
             local_state.server_state_mut().set_replication_mode(true);
             format!("") // send empty string since we don't write to stream
         }
-        "WAIT" => {
-            let senders = {
-                let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
-                replica_senders_guard.clone()
-            };         
-
+        "WAIT" => {   
+            let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
             let master_write_offset = replicas_state.get_master_write_offset();
             let replicas_write_offset = replicas_state.get_replica_offsets();
-            for (id, sender) in senders{
-                let replica_offset = replicas_write_offset.get(&id).unwrap();
-                if *replica_offset < master_write_offset{
+            for (id, _sender) in replica_senders_guard.iter(){
+                //let replica_offset = replicas_write_offset.get(id).unwrap();
+                //if *replica_offset < master_write_offset{
                     //send getack
                     //receive repsonse
                     //update replica offset
                     //if anyone is fully synced decrement count for the required number of replicas
-                } else {
+                //} else {
                     //increment count as replica already synced
-                }
+                //}
             }   
 
             format!(":{}\r\n", replicas_state.num_connected_replicas())
@@ -106,7 +102,7 @@ pub async fn execute_commands(
         };
 
         for (_id, sender) in senders{
-            sender.send(commands.to_vec()).await.unwrap(); // heap allocations
+            sender.send(commands.to_vec()).await.unwrap();
         };
     }
 

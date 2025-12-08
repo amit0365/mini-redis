@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::str::from_utf8;
+use std::sync::Arc;
 
 use crate::protocol::RedisValue;
 
@@ -64,8 +65,25 @@ pub fn encode_resp_array(array: &Vec<String>) -> String{
         }
         encoded_array
     }
+
+pub fn encode_resp_array_with_arc(prefix: &Vec<String>, arc_message: &Arc<Vec<String>>) -> String {
+        let total_len = prefix.len() + arc_message.len();
+        let mut encoded_array = format!["*{}\r\n", total_len];
+
+        // Encode prefix items
+        for item in prefix {
+            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
+        }
+
+        // Encode Arc items without cloning - just read through the Arc
+        for item in arc_message.as_ref() {
+            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
+        }
+
+        encoded_array
+    }
     
-pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) -> String{
+pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) {
         encoded_array.push_str(&format!["*{}\r\n", array.len()]);
         for item in array {
             match item{
@@ -76,8 +94,6 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) -
                 _ => (), //not supported
             }
         }
-    
-        encoded_array.clone()
     }
     
 pub fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{

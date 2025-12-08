@@ -1,6 +1,6 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::protocol::{ClientState, RedisState, RedisValue};
-use crate::utils::{encode_resp_array, parse_resp};
+use crate::utils::{encode_resp_array, encode_resp_array_with_arc, parse_resp};
 
 pub async fn handle_subscribe_mode(
     stream: &mut TcpStream,
@@ -13,10 +13,8 @@ pub async fn handle_subscribe_mode(
         tokio::select! {
             msg = receiver.recv() => {
                 if let Some((channel_name, message)) = msg {
-                    let mut array = vec!["message".to_string(), channel_name];
-                    array.extend(message);
-
-                    let response = encode_resp_array(&array);
+                    let prefix = vec!["message".to_string(), channel_name];
+                    let response = encode_resp_array_with_arc(&prefix, &message);
                     stream.write_all(response.as_bytes()).await.unwrap();
                 }
                 true

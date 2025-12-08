@@ -142,7 +142,7 @@ pub fn initialize_master_state(state: &mut RedisState<String, RedisValue>) {
         ("master_repl_offset".to_string(), RedisValue::Number(0)),
     ];
 
-    state.server_state_mut().update(&master_config);
+    state.server_state_mut().update(master_config);
 }
 
 pub async fn initialize_replica_connection(
