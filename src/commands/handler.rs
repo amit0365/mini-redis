@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
-use crate::utils::{encode_resp_array, EMPTY_RDB_FILE};
+use crate::utils::{EMPTY_RDB_FILE, encode_resp_array, encode_resp_array_str};
 
 pub async fn execute_commands(
     stream: &mut TcpStream,
@@ -18,7 +18,7 @@ pub async fn execute_commands(
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
             if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
-                encode_resp_array(&vec!["REPLCONF".to_string(), "ACK".to_string(), client_state.num_bytes_synced().to_string()])
+                encode_resp_array_str(&vec!["REPLCONF", "ACK", &client_state.num_bytes_synced().to_string()])
             } else {
                 format!("+OK\r\n")
             }
@@ -100,10 +100,10 @@ pub async fn execute_commands(
         replicas_state.increment_master_write_offset(encoded.len());
         let senders = {
             let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
-            replica_senders_guard.clone()
+            replica_senders_guard.values().cloned().collect::<Vec<_>>()
         };
 
-        for (_id, sender) in senders{
+        for sender in senders{
             sender.send(Arc::clone(&encoded)).await.unwrap();
         };
     }

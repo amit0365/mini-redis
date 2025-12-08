@@ -1,5 +1,5 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
-use crate::protocol::{ClientState, RedisState, RedisValue};
+use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::encode_resp_array_str};
 use crate::utils::{encode_resp_array, encode_resp_array_with_arc, parse_resp};
 
 pub async fn handle_subscribe_mode(
@@ -33,7 +33,7 @@ pub async fn handle_subscribe_mode(
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "PING" => {
-                                    let response = encode_resp_array(&vec!["pong".to_string(), "".to_string()]);
+                                    let response = encode_resp_array_str(&vec!["pong", ""]);
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 },
                                 "UNSUBSCRIBE" => {
