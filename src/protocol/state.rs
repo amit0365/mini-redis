@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
-use crate::{protocol::{RedisValue, StreamValue}, utils::{collect_as_strings, encode_resp_array, encode_resp_array_str, encode_resp_value_array, parse_wrapback}};
+use crate::{protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_resp_array, encode_resp_array_ref, encode_resp_array_str, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -49,7 +49,7 @@ impl<K, RedisValue> RedisState<K, RedisValue> {
 #[derive(Clone)]
 pub struct ChannelState<K>{
     channels_map: Arc<RwLock<HashMap<K, (usize, HashSet<String>)>>>,
-    subscribers: Arc<Mutex<HashMap<K, Vec<Sender<(K, Arc<Vec<String>>)>>>>>,
+    subscribers: Arc<Mutex<HashMap<K, Vec<Sender<(Arc<str>, Arc<Vec<String>>)>>>>>,
 }
 
 impl<K> ChannelState<K>{
@@ -63,7 +63,7 @@ impl<K> ChannelState<K>{
         &self.channels_map
     }
 
-    pub fn subscribers(&self) -> &Arc<Mutex<HashMap<K, Vec<Sender<(K, Arc<Vec<String>>)>>>>> {
+    pub fn subscribers(&self) -> &Arc<Mutex<HashMap<K, Vec<Sender<(Arc<str>, Arc<Vec<String>>)>>>>> {
         &self.subscribers
     }
 }
@@ -149,18 +149,18 @@ impl ServerState<String, RedisValue>{
 
 pub struct ClientState<K, V>{
     queued_state: QueuedState<K, V>,
-    subscription_state: SubscriptionState<K, V>,
+    subscription_state: SubscriptionState<V>,
     replication_state: ReplicationState<K, V>,
 }
 
-pub struct SubscriptionState<K, V>{
+pub struct SubscriptionState<V>{
     subscribe_mode: bool,
     map: (usize, HashSet<V>),
-    receiver: Option<Receiver<(K, Arc<Vec<V>>)>>,
-    sender: Option<Sender<(K, Arc<Vec<V>>)>>,
+    receiver: Option<Receiver<(Arc<str>, Arc<Vec<V>>)>>,
+    sender: Option<Sender<(Arc<str>, Arc<Vec<V>>)>>,
 }
 
-impl<K, V> SubscriptionState<K, V> {
+impl<V> SubscriptionState<V> {
     fn new() -> Self {
         SubscriptionState {
             subscribe_mode: false,
@@ -186,15 +186,15 @@ impl<K, V> SubscriptionState<K, V> {
         &mut self.map
     }
 
-    pub fn get_receiver_mut(&mut self) -> Option<&mut Receiver<(K, Arc<Vec<V>>)>> {
+    pub fn get_receiver_mut(&mut self) -> Option<&mut Receiver<(Arc<str>, Arc<Vec<V>>)>> {
         self.receiver.as_mut()
     }
 
-    pub fn get_sender(&self) -> &Option<Sender<(K, Arc<Vec<V>>)>> {
+    pub fn get_sender(&self) -> &Option<Sender<(Arc<str>, Arc<Vec<V>>)>> {
         &self.sender
     }
 
-    pub fn set_channel(&mut self, sender: Sender<(K, Arc<Vec<V>>)>, receiver: Receiver<(K, Arc<Vec<V>>)>) {
+    pub fn set_channel(&mut self, sender: Sender<(Arc<str>, Arc<Vec<V>>)>, receiver: Receiver<(Arc<str>, Arc<Vec<V>>)>) {
         self.sender = Some(sender);
         self.receiver = Some(receiver);
     }
@@ -338,11 +338,11 @@ impl ClientState<String, String>{
         self.subscription_state.get_map_mut()
     }
 
-    pub fn get_sub_receiver_mut(&mut self) -> Option<&mut Receiver<(String, Arc<Vec<String>>)>> {
+    pub fn get_sub_receiver_mut(&mut self) -> Option<&mut Receiver<(Arc<str>, Arc<Vec<String>>)>> {
         self.subscription_state.get_receiver_mut()
     }
 
-    pub fn get_sub_sender(&self) -> &Option<Sender<(String, Arc<Vec<String>>)>> {
+    pub fn get_sub_sender(&self) -> &Option<Sender<(Arc<str>, Arc<Vec<String>>)>> {
         self.subscription_state.get_sender()
     }
 
@@ -350,7 +350,7 @@ impl ClientState<String, String>{
         self.replication_state.get_receiver_mut()
     }
 
-    pub fn set_channel(&mut self, sender: Sender<(String, Arc<Vec<String>>)>, receiver: Receiver<(String, Arc<Vec<String>>)>) {
+    pub fn set_channel(&mut self, sender: Sender<(Arc<str>, Arc<Vec<String>>)>, receiver: Receiver<(Arc<str>, Arc<Vec<String>>)>) {
         self.subscription_state.set_channel(sender, receiver);
     }
 
@@ -595,8 +595,8 @@ impl RedisState<String, RedisValue>{
                         for _ in 0..len{
                             match list.pop_front(){
                                 Some(popped) => {
-                                    if let Some(val) = popped.as_string(){
-                                        popped_list.push(val.clone());
+                                    if let Some(val) = redis_value_as_string(popped){
+                                        popped_list.push(val);
                                     }
                                 }
                                 None => (),
@@ -935,8 +935,9 @@ impl RedisState<String, RedisValue>{
         let messages = Arc::new(commands.iter().skip(2).cloned().collect::<Vec<_>>());
         let mut subs_guard = self.channels_state().subscribers.lock().unwrap();
         if let Some(subs) = subs_guard.get_mut(&commands[1]){
-            subs.retain(|sender| 
-                match sender.try_send((channel_name.to_owned(), messages.clone())){
+            let channel_name_arc: Arc<str> = Arc::from(channel_name.as_str());
+            subs.retain(|sender|
+                match sender.try_send((channel_name_arc.clone(), messages.clone())){
                     Ok(_) => true,
                     Err(TrySendError::Full(_)) => true,
                     Err(TrySendError::Closed(_)) => false,

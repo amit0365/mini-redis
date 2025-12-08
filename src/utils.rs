@@ -66,6 +66,14 @@ pub fn encode_resp_array(array: &Vec<String>) -> String{
         encoded_array
     }
 
+    pub fn encode_resp_array_ref(array: &Vec<&String>) -> String{
+        let mut encoded_array = format!["*{}\r\n", array.len()];
+        for item in array {
+            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
+        }
+        encoded_array
+    }
+
 pub fn encode_resp_array_str(array: &[&str]) -> String{
         let mut encoded_array = format!["*{}\r\n", array.len()];
         for item in array {

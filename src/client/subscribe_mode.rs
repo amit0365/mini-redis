@@ -12,8 +12,8 @@ pub async fn handle_subscribe_mode(
     if let Some(receiver) = client_state.get_sub_receiver_mut() {
         tokio::select! {
             msg = receiver.recv() => {
-                if let Some((channel_name, message)) = msg {
-                    let prefix = vec!["message".to_string(), channel_name];
+                if let Some((channel_name_arc, message)) = msg {
+                    let prefix = vec!["message".to_string(), channel_name_arc.to_string()];
                     let response = encode_resp_array_with_arc(&prefix, &message);
                     stream.write_all(response.as_bytes()).await.unwrap();
                 }

@@ -63,6 +63,16 @@ impl fmt::Display for RedisValue {
     }
 }
 
+pub fn redis_value_as_string(val: RedisValue) -> Option<String> {
+    match val{
+        RedisValue::String(s) => Some(s),
+        RedisValue::StringWithTimeout((s, _)) => Some(s),
+        RedisValue::Stream(_) => None,
+        RedisValue::Number(_) => None,
+        RedisValue::Commands(_) => None,
+    }
+}
+
 impl RedisValue{
     pub fn as_string(&self) -> Option<&String> {
         match self{

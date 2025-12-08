@@ -52,16 +52,36 @@ Impact:
 - After: Single clone per string, then move ownership
 - Benefit: Eliminates redundant clones in SET command with PX/EX options
 
-Lines 469, 482, 499, 501, 565, 573, 588, 598, 658, 666: Key and value cloning in list/stream operations
-list_guard.entry(key.clone())
-sender.try_send((key.clone(), value))
-Problem: Keys cloned multiple times in the same function
-Impact: High-frequency operations (RPUSH, BLPOP) suffer most
+Lines 543, 549, 565, 569, 634, 677, 687, 767, 769: Key and value cloning in list/stream operations - ✅ FIXED
+Implementation:
+- Changed channel types from Sender<(K, RedisValue)> to Sender<(Arc<str>, RedisValue)>
+- LPUSH (lines 565-570): Clone key once, get deque reference once, consume items with into_iter()
+- RPUSH (lines 543, 549): Create Arc<str> once before waiter loop, clone Arc (cheap) for channel send
+- BLPOP (lines 634, 677, 687): Use encode_resp_array_str with key.as_str() or key_arc.as_ref()
+- XADD (lines 767, 769): Create Arc<str> once before waiter loop, clone Arc (cheap) for channel send
+- XREAD (lines 839, 852): Use key_arc.as_ref() in json! macro
+- Added encode_resp_array_str(&[&str]) utility function for zero-allocation encoding
 
-Line 530: Cloning popped values
-popped_list.push(val.clone())
-Problem: Values already being removed from deque, but then cloned
-Fix: Use drain() or move values out
+Impact:
+- Before: LPUSH with N items = N key clones + N item clones (O(2N) clones)
+- After: LPUSH with N items = 1 key clone + 0 item clones (O(1) clones)
+- Before: RPUSH/XADD with waiter = 1 entry clone + 1 String clone for channel
+- After: RPUSH/XADD with waiter = 1 entry clone + Arc creation + Arc clone (atomic refcount)
+- Before: BLPOP/XREAD receive = 1 key clone + encoding
+- After: BLPOP/XREAD receive = 0 key clones (use Arc<str> directly)
+- Benefit: 1000 queue operations saves ~1000-9000 heap allocations depending on operation mix
+
+Lines 596-599: LPOP value cloning - ✅ FIXED
+Implementation:
+- Added redis_value_as_string() helper function in value.rs that consumes RedisValue and returns owned String
+- Changed from popped.as_string() (returns &String) to redis_value_as_string(popped) (returns String)
+- Values popped from deque are now moved into result vector instead of cloned
+- Code: `if let Some(val) = redis_value_as_string(popped) { popped_list.push(val); }`
+
+Impact:
+- Before: LPOP with count=N requires N String clones
+- After: LPOP with count=N requires 0 String clones (ownership transfer)
+- Benefit: 1000 LPOP operations with count=5 each saves 5,000 heap allocations
 
 Line 820, 831: Sender and message cloning in pub/sub
 .push(sender.clone())
@@ -96,27 +116,25 @@ Problem: Returns clone of accumulated string buffer
 Fix: Take ownership of the parameter instead of &mut
 
 Optimization Priorities 📊
-High Impact (Do these first):
-Line 831 in state.rs - Pub/Sub message broadcast cloning
+
+✅ COMPLETED:
+- Line 144 in state.rs - Bulk update cloning (FIXED)
+- Lines 477-478, 484, 488 in state.rs - SET command clones (FIXED)
+- Lines 565-570 in state.rs - LPUSH cloning in loop (FIXED)
+- Lines 596-599 in state.rs - LPOP value cloning (FIXED)
+- Lines 543, 549, 634, 677, 687, 767, 769 - Channel key cloning with Arc<str> (FIXED)
+- Lines 30-31, 38-39, 157, 208, 235 in value.rs - StreamValue Arc<str> optimization (FIXED)
+
+High Impact (remaining):
+Line 937 in state.rs - Pub/Sub message broadcast cloning
 Use Arc<Vec<String>> for messages to share across subscribers
-
-Lines 30-31, 38-39 in value.rs - Stream pair cloning
-Change signature to accept Vec<(String, String)> directly instead of flattened vec
-
-Line 118 in state.rs - Bulk update cloning
-Change to update(&mut self, pairs: Vec<(String, RedisValue)>) and use drain()
 
 Line 109 in main.rs - Replica senders vec clone
 Keep vec in Arc and clone individual senders during iteration
 
-Line 501 in state.rs - LPUSH cloning in loop
-Move items instead of cloning them
 Medium Impact:
-Key cloning in entry patterns (lines 469, 499, 573, 658)
-Use to_owned() on the command slice once, store in variable
-StreamValue ID management (lines 157, 208, 235)
-Use String::new() and mutation instead of cloning
-Low Impact (micro-optimizations):
-
 Line 45 utils.rs - Return by move instead of clone
-Command string clones in SET/GET paths
+Change encode functions to take ownership instead of &mut
+
+Low Impact (micro-optimizations):
+Command string clones in SET/GET paths - Consider reusing owned strings
