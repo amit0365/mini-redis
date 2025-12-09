@@ -1,7 +1,7 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use std::{str::from_utf8, sync::Arc};
 use crate::{protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::encode_resp_array_arc};
-use crate::utils::{encode_resp_array, parse_multiple_resp, parse_rdb_with_trailing_commands, ServerConfig};
+use crate::utils::{encode_resp_array_str, parse_multiple_resp, parse_rdb_with_trailing_commands, ServerConfig};
 use crate::commands::execute_commands;
 
 // Helper function to process commands after RDB file during handshake or after handshake complete
@@ -54,15 +54,15 @@ pub async fn handle_handshake(
         let parts: Vec<&str> = buffer_str.split("\r\n").collect();
         match parts[0] {
             "+PONG" => {
-                let replconf_msg1 = encode_resp_array(&vec!["REPLCONF".to_string(), "listening-port".to_string(), port.to_owned()]);
+                let replconf_msg1 = encode_resp_array_str(&["REPLCONF", "listening-port", &port]);
                 master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
-                let replconf_msg2 = encode_resp_array(&vec!["REPLCONF".to_string(), "capa".to_string(), "psync2".to_string()]);
+                let replconf_msg2 = encode_resp_array_str(&["REPLCONF", "capa", "psync2"]);
                 master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
             },
             "+OK" => {
                 *replconf_ack_count += 1;
                 if *replconf_ack_count == 2 {
-                    let psync_msg = encode_resp_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
+                    let psync_msg = encode_resp_array_str(&["PSYNC", "?", "-1"]);
                     master_stream.write(psync_msg.as_bytes()).await.unwrap();
                 }
             }
@@ -167,7 +167,7 @@ pub async fn initialize_replica_connection(
         client_state.set_address_replica(port.clone()); // is port good as identifier
         let mut replconf_ack_count = 0;
 
-        let ping_msg = encode_resp_array(&vec!["PING".to_string()]);
+        let ping_msg = encode_resp_array_str(&["PING"]);
         master_stream.write(ping_msg.as_bytes()).await.unwrap();
 
         loop {

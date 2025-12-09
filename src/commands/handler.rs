@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
-use crate::utils::{EMPTY_RDB_FILE, encode_resp_array, encode_resp_array_arc, encode_resp_array_str};
+use crate::utils::{EMPTY_RDB_FILE, encode_resp_array_arc, encode_resp_array_str};
 
 pub async fn execute_commands(
     stream: &mut TcpStream,
@@ -18,7 +18,8 @@ pub async fn execute_commands(
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
             if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
-                encode_resp_array_str(&vec!["REPLCONF", "ACK", &client_state.num_bytes_synced().to_string()]) // can use itoa for string alloc
+                let offset_str = client_state.num_bytes_synced().to_string();
+                encode_resp_array_str(&["REPLCONF", "ACK", &offset_str]) // can use itoa for string alloc
             } else {
                 format!("+OK\r\n")
             }

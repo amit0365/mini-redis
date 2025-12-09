@@ -57,24 +57,8 @@ pub fn parse_wrapback(idx: i64, len: usize) -> usize{
             }
         } else { idx.try_into().unwrap() }
     }
-    
-pub fn encode_resp_array(array: &Vec<String>) -> String{
-        let mut encoded_array = format!["*{}\r\n", array.len()];
-        for item in array {
-            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
-        }
-        encoded_array
-    }
 
-pub fn encode_resp_array_arc(array: &Vec<Arc<str>>) -> String{
-        let mut encoded_array = format!["*{}\r\n", array.len()];
-        for item in array {
-            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
-        }
-        encoded_array
-    }
-
-    pub fn encode_resp_array_ref(array: &Vec<&String>) -> String{
+pub fn encode_resp_array_arc(array: &[Arc<str>]) -> String{
         let mut encoded_array = format!["*{}\r\n", array.len()];
         for item in array {
             encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
@@ -90,7 +74,7 @@ pub fn encode_resp_array_str(array: &[&str]) -> String{
         encoded_array
     }
 
-pub fn encode_resp_array_arc_with_prefix(prefix: &Vec<Arc<str>>, arc_message: &Arc<Vec<Arc<str>>>) -> String {
+pub fn encode_resp_array_arc_with_prefix(prefix: &[Arc<str>], arc_message: &Arc<Vec<Arc<str>>>) -> String {
         let total_len = prefix.len() + arc_message.len();
         let mut encoded_array = format!["*{}\r\n", total_len];
 

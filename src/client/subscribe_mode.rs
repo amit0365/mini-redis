@@ -16,8 +16,7 @@ pub async fn handle_subscribe_mode(
         tokio::select! {
             msg = receiver.recv() => {
                 if let Some((channel_name_arc, message)) = msg {
-                    let prefix = vec![message_literal_arc, channel_name_arc];
-                    let response = encode_resp_array_arc_with_prefix(&prefix, &message);
+                    let response = encode_resp_array_arc_with_prefix(&[message_literal_arc, channel_name_arc], &message);
                     stream.write_all(response.as_bytes()).await.unwrap();
                 }
                 true
@@ -36,7 +35,7 @@ pub async fn handle_subscribe_mode(
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 }
                                 "PING" => {
-                                    let response = encode_resp_array_str(&vec!["pong", ""]);
+                                    let response = encode_resp_array_str(&["pong", ""]);
                                     stream.write_all(response.as_bytes()).await.unwrap()
                                 },
                                 "UNSUBSCRIBE" => {

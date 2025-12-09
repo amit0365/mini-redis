@@ -504,7 +504,7 @@ impl RedisState<Arc<str>, RedisValue>{
     }
 
     pub fn get(&mut self, commands: &Vec<Arc<str>>) -> String {
-        let value = self.map_state().map.read().unwrap().get(commands[1].as_ref()).cloned();
+        let value = self.map_state().map.read().unwrap().get(&commands[1]).cloned();
         if let Some(value) = value {
             match value {
                 RedisValue::StringWithTimeout((value, timeout)) => {
@@ -535,12 +535,12 @@ impl RedisState<Arc<str>, RedisValue>{
             list_guard.entry(key.clone())
             .or_insert(VecDeque::new())
             .extend(items);
-            count = list_guard.get(key.as_ref()).unwrap().len().to_string();
+            count = list_guard.get(key).unwrap().len().to_string();
         }
 
         let mut waiters_guard = self.list_state().waiters.lock().unwrap();
         if let Some(waiting_queue) = waiters_guard.get_mut(key){
-            let key_arc: Arc<str> = Arc::from(key.as_ref());
+            let key_arc = key.clone();
             while let Some(sender) = waiting_queue.pop_front(){
                 let mut list_guard = self.list_state().list.lock().unwrap();
                 if let Some(deque) = list_guard.get_mut(key){
@@ -628,10 +628,10 @@ impl RedisState<Arc<str>, RedisValue>{
 
         {
             let mut list_guard = self.list_state().list.lock().unwrap();
-            if let Some(list) = list_guard.get_mut(key.as_ref()){
+            if let Some(list) = list_guard.get_mut(key){
                 if let Some(data) = list.pop_front(){
                     if let Some(val) = data.as_string(){
-                        return encode_resp_array_str(&[key.as_ref(), val])
+                        return encode_resp_array_arc(&[key.clone(), val.clone()])
                     }
                 }
             }
@@ -698,7 +698,7 @@ impl RedisState<Arc<str>, RedisValue>{
     
     pub fn lrange(&self, key: &Arc<str>, start: &Arc<str>, stop: &Arc<str>) -> String {
         let list_guard = self.list_state().list.lock().unwrap();
-        let array = match list_guard.get(key.as_ref()){
+        let array = match list_guard.get(key){
             Some(vec) => {
                 let start = parse_wrapback(start.parse::<i64>().unwrap(), vec.len());
                 let stop = parse_wrapback(stop.parse::<i64>().unwrap(), vec.len());
@@ -721,7 +721,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
     pub fn type_command(&self, commands: &Vec<Arc<str>>) -> String {
         let map_guard = self.map_state().map.read().unwrap();
-        let response = match map_guard.get(commands[1].as_ref()){
+        let response = match map_guard.get(&commands[1]){
             Some(val) => {
                 match val{
                     RedisValue::String(_) => "string".to_string(),
@@ -793,7 +793,7 @@ impl RedisState<Arc<str>, RedisValue>{
         match commands[1].as_ref(){
             "streams" => {
                 let key_tokens = commands.iter().skip(2)
-                .filter(|token| self.map_state().map.read().unwrap().get(token.as_ref()).is_some())
+                .filter(|token| self.map_state().map.read().unwrap().get(*token).is_some())
                 .collect::<Vec<_>>();
 
                 let id_tokens = commands.iter().skip(2 + key_tokens.len()).collect::<Vec<_>>();
@@ -802,9 +802,9 @@ impl RedisState<Arc<str>, RedisValue>{
 
                 for (key, id) in key_tokens.iter().zip(id_tokens){
                     let values = self.map_state().map.read().unwrap()
-                    .get(key.as_ref())
+                    .get(*key)
                     .unwrap() // no case for nil
-                    .get_stream_range(&id.to_string(), None);
+                    .get_stream_range(id, None);
                     if !values.is_empty() { key_entries.push(json!([key.as_ref(), values]));}
                 }
         
@@ -899,7 +899,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> String{
         client_state.set_subscribe_mode(true);
-        let subs_count = if client_state.get_subscriptions().1.contains(commands[1].as_ref()){
+        let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){
             client_state.get_subscriptions().0
         } else {
             let mut channel_guard = self.channels_state().channels_map.write().unwrap();
@@ -929,11 +929,11 @@ impl RedisState<Arc<str>, RedisValue>{
     }
 
     pub fn publish(&self, commands: &Vec<Arc<str>>) -> String{
-        let subs = self.channels_state().channels_map.read().unwrap().get(commands[1].as_ref()).unwrap().0;
+        let subs = self.channels_state().channels_map.read().unwrap().get(&commands[1]).unwrap().0;
         let channel_name = &commands[1];
         let messages = Arc::new(commands.iter().skip(2).cloned().collect::<Vec<_>>());
         let mut subs_guard = self.channels_state().subscribers.lock().unwrap();
-        if let Some(subs) = subs_guard.get_mut(commands[1].as_ref()){
+        if let Some(subs) = subs_guard.get_mut(&commands[1]){
             subs.retain(|sender|
                 match sender.try_send((channel_name.clone(), messages.clone())){
                     Ok(_) => true,
@@ -947,13 +947,13 @@ impl RedisState<Arc<str>, RedisValue>{
 
     pub fn unsubscribe(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &str, commands: &Vec<Arc<str>>) -> String{
         let mut channel_guard = self.channels_state().channels_map.write().unwrap();
-        if let Some((count, client_set)) = channel_guard.get_mut(commands[1].as_ref()){
+        if let Some((count, client_set)) = channel_guard.get_mut(&commands[1]){
             *count -= 1;
             client_set.remove(client);
         }
 
         let subscriptions = client_state.get_subscriptions_mut();
-        subscriptions.1.remove(commands[1].as_ref());
+        subscriptions.1.remove(&commands[1]);
         subscriptions.0 -= 1;
         let subs_count = subscriptions.0;
 
