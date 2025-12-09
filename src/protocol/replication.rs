@@ -46,7 +46,7 @@ pub async fn handle_handshake(
     expecting_rdb: &mut bool,
     replconf_ack_count: &mut u8,
     master_stream: &mut TcpStream,
-    port: &String,
+    port: &Arc<str>,
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     client_state: &mut ClientState<Arc<str>, Arc<str>>,
     local_replicas_state: &mut ReplicasState,
@@ -155,8 +155,8 @@ pub async fn initialize_replica_connection(
     state: RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
 ) -> tokio::task::JoinHandle<()> {
-    let master_contact = config.master_contact_for_slave.clone().unwrap();
-    let port = config.port.clone();
+    let master_contact = config.master_contact_for_slave.as_ref().unwrap();
+    let port = Arc::clone(&config.port);
 
     let (master_ip, master_port) = master_contact.split_once(" ").unwrap();
     let mut master_stream = TcpStream::connect(format!("{}:{}", master_ip, master_port)).await.unwrap();
@@ -168,7 +168,7 @@ pub async fn initialize_replica_connection(
         let mut local_replicas_state = replicas_state;
         let mut client_state = ClientState::new();
         client_state.set_replica(true);
-        client_state.set_address_replica(port.clone()); // is port good as identifier
+        client_state.set_address_replica(&port); // is port good as identifier
         let mut replconf_ack_count = 0;
 
         let ping_msg = encode_resp_array_str(&["PING"]);

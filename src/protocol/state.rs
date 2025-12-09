@@ -205,7 +205,7 @@ impl<K, V> SubscriptionState<K, V> {
 }
 
 pub struct ReplicationState<K, V>{
-    addr: String,
+    addr: Arc<str>,
     is_replica: bool,
     num_bytes_synced: usize,
     receiver: Option<Receiver<V>>,
@@ -215,7 +215,7 @@ pub struct ReplicationState<K, V>{
 impl<K, V> ReplicationState<K, V> {
     fn new() -> Self {
         ReplicationState {
-            addr: String::new(),
+            addr: Arc::from(""),
             is_replica: false,
             num_bytes_synced: 0,
             receiver: None,
@@ -223,12 +223,12 @@ impl<K, V> ReplicationState<K, V> {
         }
     }
 
-    pub fn get_address(&self) -> &String {
+    pub fn get_address(&self) -> &Arc<str> {
         &self.addr
     }
 
-    pub fn set_address(&mut self, addr: String){
-        self.addr = addr;
+    pub fn set_address(&mut self, addr: &Arc<str>){
+        self.addr = Arc::clone(addr);
     }
 
     pub fn is_replica(&self) -> bool {
@@ -313,11 +313,11 @@ impl ClientState<Arc<str>, Arc<str>>{
         }
     }
 
-    pub fn get_address_replica(&self) -> &String {
+    pub fn get_address_replica(&self) -> &Arc<str> {
         &self.replication_state.get_address()
     }
 
-    pub fn set_address_replica(&mut self, addr: String){
+    pub fn set_address_replica(&mut self, addr: &Arc<str>){
         self.replication_state.set_address(addr);
     }
 
@@ -474,8 +474,8 @@ impl RedisState<Arc<str>, RedisValue>{
     }
 
     pub fn set(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
-        let key = commands[1].clone();
-        let value = commands[2].clone();
+        let key = Arc::clone(&commands[1]);
+        let value = Arc::clone(&commands[2]);
         match commands.iter().skip(3).next() {
             Some(str) => {
                 match str.to_uppercase().as_str() {
@@ -534,10 +534,9 @@ impl RedisState<Arc<str>, RedisValue>{
             let items = commands
                 .iter()
                 .skip(2)
-                .map(|v| RedisValue::String(v.clone()))
-                .collect::<Vec<RedisValue>>();
+                .map(|v| RedisValue::String(Arc::clone(v)));
             list_guard
-                .entry(key.clone())
+                .entry(Arc::clone(key))
                 .or_insert(VecDeque::new())
                 .extend(items);
             list_guard.get(key).unwrap().len().to_string()
@@ -545,13 +544,13 @@ impl RedisState<Arc<str>, RedisValue>{
 
         let mut waiters_guard = self.list_state().waiters.lock()?;
         if let Some(waiting_queue) = waiters_guard.get_mut(key) {
-            let key_arc = key.clone();
+            let key_arc = Arc::clone(key);
             while let Some(sender) = waiting_queue.pop_front() {
                 let mut list_guard = self.list_state().list.lock()?;
                 if let Some(deque) = list_guard.get_mut(key) {
                     if let Some(value) = deque.pop_front() {
                         drop(list_guard); // Release lock before sending
-                        match sender.try_send((key_arc.clone(), value)) {
+                        match sender.try_send((Arc::clone(&key_arc), value)) {
                             Ok(_) => break,
                             Err(TrySendError::Full(_)) => return Err(RedisError::TooManyWaiters),
                             Err(TrySendError::Closed(_)) => continue,
@@ -569,16 +568,15 @@ impl RedisState<Arc<str>, RedisValue>{
         let items = commands
             .iter()
             .skip(2)
-            .map(|v| RedisValue::String(v.clone()))
-            .collect::<Vec<RedisValue>>();
-        let key = commands[1].clone();
-        let deque = list_guard.entry(key.clone()).or_insert(VecDeque::new());
+            .map(|v| RedisValue::String(Arc::clone(v)));
+        let key = &commands[1];
+        let deque = list_guard.entry(Arc::clone(key)).or_insert(VecDeque::new());
 
         for item in items.into_iter() {
             deque.push_front(item);
         }
 
-        let count = list_guard.get(&key).unwrap().len();
+        let count = list_guard.get(key).unwrap().len();
         Ok(format!(":{}\r\n", count.to_string()))
     } 
 
@@ -641,7 +639,7 @@ impl RedisState<Arc<str>, RedisValue>{
             if let Some(list) = list_guard.get_mut(key){
                 if let Some(data) = list.pop_front(){
                     if let Some(val) = data.as_string(){
-                        return Ok(encode_resp_array_arc(&[key.clone(), val.clone()]))
+                        return Ok(encode_resp_array_arc(&[Arc::clone(key), Arc::clone(val)]))
                     }
                 }
             }
@@ -649,7 +647,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
         let mut receiver = {
             let mut waiters_guard = self.list_state().waiters.lock()?;
-            let queue = waiters_guard.entry(key.clone()).or_insert(VecDeque::new());
+            let queue = waiters_guard.entry(Arc::clone(key)).or_insert(VecDeque::new());
             if queue.len() > 10000 {
                 return Err(RedisError::Other("ERR_TOO_MANY_BLPOP_WAITERS_FOR_THE_KEY".to_string()))
             }
@@ -757,33 +755,32 @@ impl RedisState<Arc<str>, RedisValue>{
 
     pub fn xadd(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = &commands[1];
-        let pairs_grouped = commands[3..].chunks_exact(2).map(|chunk| (chunk[0].clone(), chunk[1].clone())).collect::<Vec<_>>();
 
         let has_waiters = {
             let map_waiters_guard = self.map_state().waiters.lock()?;
             map_waiters_guard.get(key).map_or(false, |q| !q.is_empty())
         };
 
-        let pairs_for_waiter = if has_waiters {
-            Some(pairs_grouped.clone())
-        } else {
-            None  
-        };
+        let pairs_grouped = Arc::new(
+            commands[3..].chunks_exact(2)
+                .map(|chunk| (Arc::clone(&chunk[0]), Arc::clone(&chunk[1])))
+                .collect::<Vec<_>>()
+        );
 
         let result = {
             let mut map_guard = self.map_state().map.write()?;
             map_guard
-                .entry(key.clone())
+                .entry(Arc::clone(key))
                 .or_insert(RedisValue::Stream(StreamValue::new()))
-                .update_stream(&commands[2], pairs_grouped)?
+                .update_stream(&commands[2], Arc::clone(&pairs_grouped))?
         };
 
-        if let Some(pairs) = pairs_for_waiter {
+        if has_waiters {
             let mut map_waiters_guard = self.map_state().waiters.lock()?;
             if let Some(waiters_queue) = map_waiters_guard.get_mut(key) {
-                let stream_value = StreamValue::new_blocked(commands[2].clone(), &pairs);
+                let stream_value = StreamValue::new_blocked(Arc::clone(&commands[2]), pairs_grouped);
                 while let Some(waiter) = waiters_queue.pop_front() {
-                    match waiter.try_send((key.clone(), RedisValue::Stream(stream_value.clone()))) {
+                    match waiter.try_send((Arc::clone(key), RedisValue::Stream(stream_value.clone()))) {
                         Ok(_) => break,
                         Err(TrySendError::Full(_)) => return Err(RedisError::TooManyWaiters),
                         Err(TrySendError::Closed(_)) => continue,
@@ -843,7 +840,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
                 let mut receiver = {
                     let mut waiters_guard = self.map_state().waiters.lock()?;
-                    let queue = waiters_guard.entry(key.clone()).or_insert(VecDeque::new());
+                    let queue = waiters_guard.entry(Arc::clone(key)).or_insert(VecDeque::new());
                     if queue.len() > 10000{
                         return Err(RedisError::Other("ERR_TOO_MANY_XREAD_WAITERS_FOR_THE_KEY".to_string()))
                     }
@@ -893,7 +890,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
     pub fn incr(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let mut map_guard = self.map_state().map.write()?;
-        let val = map_guard.entry(commands[1].clone()).or_insert(RedisValue::Number(0));
+        let val = map_guard.entry(Arc::clone(&commands[1])).or_insert(RedisValue::Number(0));
         match val{
             RedisValue::Number(n) => {
                 *n += 1;
@@ -928,12 +925,12 @@ impl RedisState<Arc<str>, RedisValue>{
             client_state.get_subscriptions().0
         } else {
             let mut channel_guard = self.channels_state().channels_map.write()?;
-            let (count, client_set) = channel_guard.entry(commands[1].clone()).or_insert((0, HashSet::new()));
+            let (count, client_set) = channel_guard.entry(Arc::clone(&commands[1])).or_insert((0, HashSet::new()));
             *count += 1;
-            client_set.insert(client.clone());
+            client_set.insert(Arc::clone(client));
 
             let subscriptions = client_state.get_subscriptions_mut();
-            subscriptions.1.insert(commands[1].clone());
+            subscriptions.1.insert(Arc::clone(&commands[1]));
             subscriptions.0 += 1;
             subscriptions.0
         };
@@ -949,7 +946,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
         if let Some(sender) = client_state.get_sub_sender() {
             let mut subs_guard = self.channels_state().subscribers.lock()?;
-            subs_guard.entry(commands[1].clone()).or_insert(Vec::new()).push(sender.clone());
+            subs_guard.entry(Arc::clone(&commands[1])).or_insert(Vec::new()).push(sender.clone());
         }
         Ok(())
     }
@@ -966,7 +963,7 @@ impl RedisState<Arc<str>, RedisValue>{
         let mut subs_guard = self.channels_state().subscribers.lock()?;
         if let Some(subs) = subs_guard.get_mut(&commands[1]){
             subs.retain(|sender|
-                match sender.try_send((channel_name.clone(), messages.clone())){
+                match sender.try_send((Arc::clone(channel_name), Arc::clone(&messages))){
                     Ok(_) => true,
                     Err(TrySendError::Full(_)) => true,
                     Err(TrySendError::Closed(_)) => false,

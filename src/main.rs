@@ -31,12 +31,13 @@ async fn main() {
             continue;
         }
 
+        let client_addr = Arc::from(addr.to_string());
         client::spawn_client_handler(
             stream,
-            addr,
+            client_addr,
             state.clone(),
             replicas_state.clone(),
-            connection_count.clone(),
+            Arc::clone(&connection_count),
         );
     }
 }

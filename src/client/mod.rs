@@ -23,13 +23,13 @@ pub fn can_accept_connection(connection_count: &Arc<AtomicUsize>, max: usize) ->
 
 pub fn spawn_client_handler(
     stream: TcpStream,
-    addr: SocketAddr,
+    client_addr: Arc<str>,
     state: RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
     connection_count: Arc<AtomicUsize>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = handle_client_connection(stream, addr, state, replicas_state).await {
+        if let Err(e) = handle_client_connection(stream, client_addr, state, replicas_state).await {
             eprintln!("Connection handler error: {}", e);
         }
         connection_count.fetch_sub(1, Ordering::SeqCst);
@@ -38,7 +38,7 @@ pub fn spawn_client_handler(
 
 pub async fn handle_client_connection(
     mut stream: TcpStream,
-    addr: SocketAddr,
+    client_addr: Arc<str>,
     state: RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
 ) -> RedisResult<()> {
@@ -46,7 +46,6 @@ pub async fn handle_client_connection(
     let mut local_state = state;
     let mut local_replicas_state = replicas_state;
     let mut client_state = ClientState::new();
-    let client_addr = Arc::from(addr.to_string());
 
     loop {
         let result = if client_state.is_subscribe_mode() {
@@ -82,7 +81,7 @@ pub async fn handle_client_connection(
                 continue;
             }
             Err(e) => {
-                eprintln!("Client error from {}: {}", addr, e);
+                eprintln!("Client error from {}: {}", client_addr, e);
                 return Err(e);
             }
         }

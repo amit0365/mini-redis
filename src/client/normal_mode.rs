@@ -18,9 +18,9 @@ pub async fn handle_normal_mode(
         Ok(n) => {
             let commands = parse_resp(&buf[..n])?;
             if client_state.is_multi_queue_mode() {
-                handle_multi_mode(stream, client_state, local_state, local_replicas_state, addr, &commands).await?;
+                handle_multi_mode(stream, client_state, local_state, local_replicas_state, addr, commands).await?;
             } else {
-                handle_non_multi_mode(stream, client_state, local_state, local_replicas_state, addr, &commands).await?;
+                handle_non_multi_mode(stream, client_state, local_state, local_replicas_state, addr, commands).await?;
             }
             
             Ok(())
@@ -36,7 +36,7 @@ async fn handle_multi_mode(
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     local_replicas_state: &mut ReplicasState,
     addr: &Arc<str>,
-    commands: &Vec<Arc<str>>,
+    commands: Vec<Arc<str>>,
 ) -> RedisResult<()> {
     match commands[0].as_ref() {
         "EXEC" => {
@@ -70,7 +70,7 @@ async fn handle_multi_mode(
             stream.write_all(b"+OK\r\n").await?
         }
         _ => {
-            client_state.push_command(commands.to_owned());
+            client_state.push_command(commands);
             stream.write_all(b"+QUEUED\r\n").await?
         },
     }
@@ -84,7 +84,7 @@ async fn handle_non_multi_mode(
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     local_replicas_state: &mut ReplicasState,
     addr: &Arc<str>,
-    commands: &Vec<Arc<str>>,
+    commands: Vec<Arc<str>>,
 ) -> RedisResult<()> {
     match commands[0].as_ref() {
         "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await?,

@@ -16,8 +16,8 @@ pub enum RedisValue{
 pub struct StreamValue<K, V>{
     last_id: Arc<str>,
     time_map: HashMap<u128, u64>, //time -> last seqquence number
-    map: BTreeMap<Arc<str>, (u128, u64, Vec<(K, V)>)>,
-    waiters_value: (Arc<str>, Vec<(K, V)>)
+    map: BTreeMap<Arc<str>, (u128, u64, Arc<Vec<(K, V)>>)>,
+    waiters_value: (Arc<str>, Arc<Vec<(K, V)>>)
 }
 
 impl<K: Serialize, V: Serialize> Serialize for StreamValue<K, V> {
@@ -29,26 +29,26 @@ impl<K: Serialize, V: Serialize> Serialize for StreamValue<K, V> {
         let mut state = serializer.serialize_struct("StreamValue", 4)?;
         state.serialize_field("last_id", self.last_id.as_ref())?;
         state.serialize_field("time_map", &self.time_map)?;
-        let map_serializable: BTreeMap<&str, _> = self.map.iter()
-            .map(|(k, v)| (k.as_ref(), v))
+        let map_serializable: BTreeMap<&str, (u128, u64, &Vec<(K, V)>)> = self.map.iter()
+            .map(|(k, (time, seq, pairs))| (k.as_ref(), (*time, *seq, pairs.as_ref())))
             .collect();
         state.serialize_field("map", &map_serializable)?;
-        state.serialize_field("waiters_value", &(self.waiters_value.0.as_ref(), &self.waiters_value.1))?;
+        state.serialize_field("waiters_value", &(self.waiters_value.0.as_ref(), self.waiters_value.1.as_ref()))?;
         state.end()
     }
 }
 
 impl StreamValue<Arc<str>, Arc<str>>{
     pub fn new() -> Self {
-        StreamValue { last_id: Arc::from(""), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (Arc::from(""), Vec::new())}
+        StreamValue { last_id: Arc::from(""), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (Arc::from(""), Arc::new(Vec::new()))}
     }
 
-    pub fn new_blocked(id: Arc<str>, pairs_grouped: &Vec<(Arc<str>, Arc<str>)>) -> Self {
-        StreamValue { last_id: Arc::from(""), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (id, pairs_grouped.to_vec())}
+    pub fn new_blocked(id: Arc<str>, pairs_grouped: Arc<Vec<(Arc<str>, Arc<str>)>>) -> Self {
+        StreamValue { last_id: Arc::from(""), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (id, pairs_grouped)}
     }
 
-    pub fn insert(&mut self, id: Arc<str>, id_time: u128, id_seq: u64, pairs_grouped: Vec<(Arc<str>, Arc<str>)>) -> Option<(u128, u64, Vec<(Arc<str>, Arc<str>)>)> {
-        self.map.insert(id, (id_time, id_seq, pairs_grouped))
+    pub fn insert(&mut self, id: Arc<str>, id_time: u128, id_seq: u64, pairs_grouped: Arc<Vec<(Arc<str>, Arc<str>)>>) {
+        self.map.insert(id, (id_time, id_seq, pairs_grouped));
     }
 }
 
@@ -170,7 +170,7 @@ impl RedisValue{
         }
     }
 
-    pub fn update_stream(&mut self, id: &Arc<str>, pairs: Vec<(Arc<str>, Arc<str>)>) -> RedisResult<String>{
+    pub fn update_stream(&mut self, id: &Arc<str>, pairs: Arc<Vec<(Arc<str>, Arc<str>)>>) -> RedisResult<String>{
         match self{
             RedisValue::String(_) | RedisValue::Number(_) |
             RedisValue::StringWithTimeout(_) | RedisValue::Commands(_) => {
@@ -241,7 +241,7 @@ impl RedisValue{
 
                 let new_id_string = format!("{}-{}", new_id_time, new_id_seq);
                 let new_id_arc: Arc<str> = Arc::from(new_id_string.as_str());
-                stream.last_id = new_id_arc.clone();
+                stream.last_id = Arc::clone(&new_id_arc);
                 stream.insert(new_id_arc, new_id_time, new_id_seq, pairs);
 
                 Ok(format!("${}\r\n{}\r\n", new_id_string.len(), new_id_string))

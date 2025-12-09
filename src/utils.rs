@@ -8,24 +8,24 @@ use crate::error::{RedisError, RedisResult};
 pub const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
 
 pub struct ServerConfig {
-    pub port: String,
-    pub master_contact_for_slave: Option<String>,
+    pub port: Arc<str>,
+    pub master_contact_for_slave: Option<Arc<str>>,
 }
 
 impl ServerConfig {
     pub fn parse_from_args(args: Vec<String>) -> Self {
-        let mut port = "6379".to_string();
-        let mut master_contact_for_slave: Option<String> = None;
+        let mut port = "6379";
+        let mut master_contact_for_slave: Option<Arc<str>> = None;
 
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
                 "--port" => {
-                    port = args[i + 1].to_owned();
+                    port = args[i + 1].as_str();
                     i += 2;
                 },
                 "--replicaof" => {
-                    master_contact_for_slave = Some(args[i + 1].to_owned());
+                    master_contact_for_slave = Some(Arc::from(args[i + 1].as_str()));
                     i += 2;
                 },
                 _ => i += 1,
@@ -33,7 +33,7 @@ impl ServerConfig {
         }
 
         ServerConfig {
-            port,
+            port: Arc::from(port),
             master_contact_for_slave,
         }
     }

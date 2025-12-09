@@ -37,7 +37,7 @@ pub async fn execute_commands(
             {
                 let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
                 let (sender, receiver) = mpsc::channel(1);
-                replicas_senders_guard.entry(client_addr.clone()).insert_entry(sender);
+                replicas_senders_guard.entry(Arc::clone(client_addr)).insert_entry(sender);
                 client_state.set_replica(true);
                 client_state.set_replica_receiver(receiver);
             }
