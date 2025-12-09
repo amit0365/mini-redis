@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
+use crate::error::RedisResult;
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::{EMPTY_RDB_FILE, encode_resp_array_arc, encode_resp_array_str};
 
@@ -12,7 +13,7 @@ pub async fn execute_commands(
     replicas_state: &mut ReplicasState,
     client_addr: &Arc<str>,
     commands: &Vec<Arc<str>>
-) -> String{
+) -> RedisResult<String>{
     let response = match commands[0].to_uppercase().as_str() {
         "PING" => format!("+PONG\r\n"),
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
@@ -63,27 +64,27 @@ pub async fn execute_commands(
 
             format!(":{}\r\n", replicas_state.num_connected_replicas())
         },
-        "SET" => local_state.set(&commands),
-        "GET" => local_state.get(&commands),
-        "RPUSH" => local_state.rpush(&commands),
-        "LPUSH" => local_state.lpush(&commands),
-        "LLEN" => local_state.llen(&commands),
-        "LPOP" => local_state.lpop(&commands),
-        "BLPOP" => local_state.blpop(&commands).await,
-        "LRANGE" => local_state.lrange(&commands[1], &commands[2], &commands[3]),
-        "TYPE" => local_state.type_command(&commands),
-        "XADD" => local_state.xadd(&commands),
-        "XRANGE" => local_state.xrange(&commands),
-        "XREAD" => local_state.xread(&commands).await,
+        "SET" => local_state.set(&commands)?,
+        "GET" => local_state.get(&commands)?,
+        "RPUSH" => local_state.rpush(&commands)?,
+        "LPUSH" => local_state.lpush(&commands)?,
+        "LLEN" => local_state.llen(&commands)?,
+        "LPOP" => local_state.lpop(&commands)?,
+        "BLPOP" => local_state.blpop(&commands).await?,
+        "LRANGE" => local_state.lrange(&commands[1], &commands[2], &commands[3])?,
+        "TYPE" => local_state.type_command(&commands)?,
+        "XADD" => local_state.xadd(&commands)?,
+        "XRANGE" => local_state.xrange(&commands)?,
+        "XREAD" => local_state.xread(&commands).await?,
         "SUBSCRIBE" => {
-            let count_response = local_state.subscribe(client_state, &client_addr,  &commands);
-            local_state.handle_subscriber(client_state, &commands).await;
+            let count_response = local_state.subscribe(client_state, &client_addr,  &commands)?;
+            local_state.handle_subscriber(client_state, &commands).await?;
             count_response
         }
-        "PUBLISH" => local_state.publish(&commands),
-        "INCR" => local_state.incr(&commands),
-        "MULTI" => local_state.multi(client_state),
-        "INFO" => local_state.info(&commands),
+        "PUBLISH" => local_state.publish(&commands)?,
+        "INCR" => local_state.incr(&commands)?,
+        "MULTI" => local_state.multi(client_state)?,
+        "INFO" => local_state.info(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 
@@ -109,5 +110,5 @@ pub async fn execute_commands(
         };
     }
 
-    response
+    Ok(response)
 }

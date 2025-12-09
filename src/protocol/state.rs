@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
-use crate::{protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_resp_array_str, encode_resp_array_arc, encode_resp_value_array, parse_wrapback}};
+use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_resp_array_arc, encode_resp_array_str, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -473,19 +473,21 @@ impl RedisState<Arc<str>, RedisValue>{
         fullresync_response
     }
 
-    pub fn set(&mut self, commands: &Vec<Arc<str>>) -> String {
+    pub fn set(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = commands[1].clone();
         let value = commands[2].clone();
         match commands.iter().skip(3).next() {
             Some(str) => {
                 match str.to_uppercase().as_str() {
                     "PX" => {
-                        let timeout = Instant::now() + Duration::from_millis(commands[4].parse::<u64>().unwrap());
-                        self.map_state().map.write().unwrap().insert(key, RedisValue::StringWithTimeout((value, timeout)));
+                        let timeout_ms: u64 = commands[4].parse()?;
+                        let timeout = Instant::now() + Duration::from_millis(timeout_ms);
+                        self.map_state().map.write()?.insert(key, RedisValue::StringWithTimeout((value, timeout)));
                     }
                     "EX" => {
-                        let timeout = Instant::now() + Duration::from_secs(commands[4].parse::<u64>().unwrap());
-                        self.map_state().map.write().unwrap().insert(key, RedisValue::StringWithTimeout((value, timeout)));
+                        let timeout_s: u64 = commands[4].parse()?;
+                        let timeout = Instant::now() + Duration::from_secs(timeout_s);
+                        self.map_state().map.write()?.insert(key, RedisValue::StringWithTimeout((value, timeout)));
                     }
                     _ => (),
                 }
@@ -496,59 +498,62 @@ impl RedisState<Arc<str>, RedisValue>{
                     Err(_) => RedisValue::String(value),
                 };
 
-                self.map_state().map.write().unwrap().insert(key, redis_val);
+                self.map_state().map.write()?.insert(key, redis_val);
             }
         }
 
-        format!("+OK\r\n")
+        Ok("+OK\r\n".to_string())
     }
 
-    pub fn get(&mut self, commands: &Vec<Arc<str>>) -> String {
-        let value = self.map_state().map.read().unwrap().get(&commands[1]).cloned();
+    pub fn get(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let value = self.map_state().map.read()?.get(&commands[1]).cloned();
         if let Some(value) = value {
             match value {
                 RedisValue::StringWithTimeout((value, timeout)) => {
                     if Instant::now() < timeout {
-                        format!("${}\r\n{}\r\n", value.len(), value)
+                        Ok(format!("${}\r\n{}\r\n", value.len(), value))
                     } else {
-                        format!("$-1\r\n")
+                        Ok("$-1\r\n".to_string())
                     }
                 }
                 RedisValue::String(val) => {
-                    format!("${}\r\n{}\r\n", val.len(), val)
+                    Ok(format!("${}\r\n{}\r\n", val.len(), val))
                 }
                 RedisValue::Number(val) => {
-                    format!("${}\r\n{}\r\n", val.to_string().len(), val)
+                    Ok(format!("${}\r\n{}\r\n", val.to_string().len(), val))
                 }
-                _ => format!("$-1\r\n") // fix error handling
+                _ => Ok("$-1\r\n".to_string()) // fix error handling
             }
-        } else { format!("$-1\r\n")}
+        } else { Ok("$-1\r\n".to_string())}
     } 
 
-    pub fn rpush(&mut self, commands: &Vec<Arc<str>>) -> String {
-        let mut count = String::new();
+    pub fn rpush(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = &commands[1];
+        let count = {
+            let mut list_guard = self.list_state().list.lock()?;
+            let items = commands
+                .iter()
+                .skip(2)
+                .map(|v| RedisValue::String(v.clone()))
+                .collect::<Vec<RedisValue>>();
+            list_guard
+                .entry(key.clone())
+                .or_insert(VecDeque::new())
+                .extend(items);
+            list_guard.get(key).unwrap().len().to_string()
+        };
 
-        {
-            let mut list_guard = self.list_state().list.lock().unwrap();
-            let items = commands.iter().skip(2).map(|v| RedisValue::String(v.clone())).collect::<Vec<RedisValue>>();
-            list_guard.entry(key.clone())
-            .or_insert(VecDeque::new())
-            .extend(items);
-            count = list_guard.get(key).unwrap().len().to_string();
-        }
-
-        let mut waiters_guard = self.list_state().waiters.lock().unwrap();
-        if let Some(waiting_queue) = waiters_guard.get_mut(key){
+        let mut waiters_guard = self.list_state().waiters.lock()?;
+        if let Some(waiting_queue) = waiters_guard.get_mut(key) {
             let key_arc = key.clone();
-            while let Some(sender) = waiting_queue.pop_front(){
-                let mut list_guard = self.list_state().list.lock().unwrap();
-                if let Some(deque) = list_guard.get_mut(key){
-                    if let Some(value) = deque.pop_front(){
+            while let Some(sender) = waiting_queue.pop_front() {
+                let mut list_guard = self.list_state().list.lock()?;
+                if let Some(deque) = list_guard.get_mut(key) {
+                    if let Some(value) = deque.pop_front() {
                         drop(list_guard); // Release lock before sending
-                        match sender.try_send((key_arc.clone(), value)){
+                        match sender.try_send((key_arc.clone(), value)) {
                             Ok(_) => break,
-                            Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
+                            Err(TrySendError::Full(_)) => return Err(RedisError::TooManyWaiters),
                             Err(TrySendError::Closed(_)) => continue,
                         }
                     }
@@ -556,42 +561,45 @@ impl RedisState<Arc<str>, RedisValue>{
             }
         }
 
-        format!(":{}\r\n", count)
+        Ok(format!(":{}\r\n", count))
     } 
 
-    pub fn lpush(&mut self, commands: &Vec<Arc<str>>) -> String {
-        let mut list_guard = self.list_state().list.lock().unwrap();
-        let items = commands.iter().skip(2).map(|v| RedisValue::String(v.clone())).collect::<Vec<RedisValue>>();
+    pub fn lpush(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let mut list_guard = self.list_state().list.lock()?;
+        let items = commands
+            .iter()
+            .skip(2)
+            .map(|v| RedisValue::String(v.clone()))
+            .collect::<Vec<RedisValue>>();
         let key = commands[1].clone();
-        let deque = list_guard.entry(key.clone())
-            .or_insert(VecDeque::new());
+        let deque = list_guard.entry(key.clone()).or_insert(VecDeque::new());
 
         for item in items.into_iter() {
             deque.push_front(item);
         }
 
         let count = list_guard.get(&key).unwrap().len();
-        format!(":{}\r\n", count.to_string())
+        Ok(format!(":{}\r\n", count.to_string()))
     } 
 
-    pub fn llen(&self, commands: &Vec<Arc<str>>) -> String {
-        let list_guard = self.list_state().list.lock().unwrap();
-        let len = match list_guard.get(&commands[1]){
+    pub fn llen(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let list_guard = self.list_state().list.lock()?;
+        let len = match list_guard.get(&commands[1]) {
             Some(list) => list.len().to_string(),
-            None => 0.to_string()
+            None => 0.to_string(),
         };
 
-        format!(":{}\r\n", len)
+        Ok(format!(":{}\r\n", len))
     } 
 
-    pub fn lpop(&mut self, commands: &Vec<Arc<str>>) -> String {
-        let mut list_guard = self.list_state().list.lock().unwrap();
+    pub fn lpop(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let mut list_guard = self.list_state().list.lock()?;
         match list_guard.get_mut(&commands[1]){
             Some(list) => {
                 match commands.iter().skip(2).next(){
                     Some(n) => {
                         let mut popped_list = Vec::new();
-                        let len = n.parse::<usize>().unwrap(); //remove unwrap
+                        let len = n.parse::<usize>()?;
                         for _ in 0..len{
                             match list.pop_front(){
                                 Some(popped) => {
@@ -603,45 +611,47 @@ impl RedisState<Arc<str>, RedisValue>{
                             }
                         }
 
-                        encode_resp_array_arc(&popped_list)
+                        Ok(encode_resp_array_arc(&popped_list))
                     },
 
                     None => {
                         match list.pop_front(){
                             Some(popped) => {
                                 if let Some(val) = popped.as_string(){
-                                    format!("${}\r\n{}\r\n", val.len(), val)
-                                } else {format!("$-1\r\n")} // fix this
+                                    Ok(format!("${}\r\n{}\r\n", val.len(), val))
+                                } else {
+                                    Ok(format!("$-1\r\n"))
+                                }
                             }
-                            None => format!("$-1\r\n"),
+                            None => Ok(format!("$-1\r\n")),
                         }
                     },
                 }
             },
 
-            None => format!("$-1\r\n")
+            None => Ok(format!("$-1\r\n"))
         }
     } 
 
-    pub async fn blpop(&mut self, commands: &Vec<Arc<str>>) -> String {
+    pub async fn blpop(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = &commands[1];
 
         {
-            let mut list_guard = self.list_state().list.lock().unwrap();
+            let mut list_guard = self.list_state().list.lock()?;
             if let Some(list) = list_guard.get_mut(key){
                 if let Some(data) = list.pop_front(){
                     if let Some(val) = data.as_string(){
-                        return encode_resp_array_arc(&[key.clone(), val.clone()])
+                        return Ok(encode_resp_array_arc(&[key.clone(), val.clone()]))
                     }
                 }
             }
         }
 
         let mut receiver = {
-            let mut waiters_guard = self.list_state().waiters.lock().unwrap();
+            let mut waiters_guard = self.list_state().waiters.lock()?;
             let queue = waiters_guard.entry(key.clone()).or_insert(VecDeque::new());
             if queue.len() > 10000 {
-                return format!("ERR_TOO_MANY_BLPOP_WAITERS_FOR_THE_KEY")
+                return Err(RedisError::Other("ERR_TOO_MANY_BLPOP_WAITERS_FOR_THE_KEY".to_string()))
             }
 
             let (sender, receiver) = mpsc::channel(1);
@@ -669,39 +679,47 @@ impl RedisState<Arc<str>, RedisValue>{
         //     }
         // }
 
-        let timeout: f64 = commands.last().unwrap().parse().unwrap(); // yo check this
+        let timeout: f64 = commands.last()
+            .ok_or_else(|| RedisError::InvalidCommand("BLPOP requires timeout argument".to_string()))?
+            .parse()?;
         if timeout == 0.0 {
             match receiver.recv().await{
                 Some((key_arc, value)) => {
                     if let Some(val) = value.as_string(){
-                        encode_resp_array_str(&[key_arc.as_ref(), val])
-                    } else {format!("$\r\n")} //fix this
+                        Ok(encode_resp_array_str(&[key_arc.as_ref(), val]))
+                    } else {
+                        Ok(format!("*-1\r\n"))
+                    }
                 }
-                None => format!("$\r\n"), //todo fix this
+                None => Ok(format!("*-1\r\n")),
             }
         } else {
             tokio::select! {
                 result = receiver.recv() => {
                     if let Some((key_arc, value)) = result{
                         if let Some(val) = value.as_string(){
-                            encode_resp_array_str(&[key_arc.as_ref(), val])
-                        } else {format!("$\r\n")} //fix this
-                    } else {format!("*-1\r\n")} // none so disconnected or dropped
+                            Ok(encode_resp_array_str(&[key_arc.as_ref(), val]))
+                        } else {
+                            Ok(format!("*-1\r\n"))
+                        }
+                    } else {
+                        Ok(format!("*-1\r\n"))
+                    }
                 }
 
                 _ = sleep(Duration::from_secs_f64(timeout)) => {
-                    format!("*-1\r\n")
+                    Ok(format!("*-1\r\n"))
                 }
             }
         }
     }
     
-    pub fn lrange(&self, key: &Arc<str>, start: &Arc<str>, stop: &Arc<str>) -> String {
-        let list_guard = self.list_state().list.lock().unwrap();
+    pub fn lrange(&self, key: &Arc<str>, start: &Arc<str>, stop: &Arc<str>) -> RedisResult<String> {
+        let list_guard = self.list_state().list.lock()?;
         let array = match list_guard.get(key){
             Some(vec) => {
-                let start = parse_wrapback(start.parse::<i64>().unwrap(), vec.len());
-                let stop = parse_wrapback(stop.parse::<i64>().unwrap(), vec.len());
+                let start = parse_wrapback(start.parse::<i64>()?, vec.len())?;
+                let stop = parse_wrapback(stop.parse::<i64>()?, vec.len())?;
 
                 if start >= vec.len(){
                     VecDeque::new()
@@ -716,11 +734,11 @@ impl RedisState<Arc<str>, RedisValue>{
             None => VecDeque::new()
         };
 
-        encode_resp_array_arc(&collect_as_strings(array))
+        Ok(encode_resp_array_arc(&collect_as_strings(array)))
     } 
 
-    pub fn type_command(&self, commands: &Vec<Arc<str>>) -> String {
-        let map_guard = self.map_state().map.read().unwrap();
+    pub fn type_command(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let map_guard = self.map_state().map.read()?;
         let response = match map_guard.get(&commands[1]){
             Some(val) => {
                 match val{
@@ -734,16 +752,15 @@ impl RedisState<Arc<str>, RedisValue>{
             None => "none".to_string()
         };
 
-        format!("+{}\r\n", response)
+        Ok(format!("+{}\r\n", response))
     } 
 
-    pub fn xadd(&self, commands: &Vec<Arc<str>>) -> String {
+    pub fn xadd(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = &commands[1];
-        let mut result = String::new();
         let pairs_grouped = commands[3..].chunks_exact(2).map(|chunk| (chunk[0].clone(), chunk[1].clone())).collect::<Vec<_>>();
 
         let has_waiters = {
-            let map_waiters_guard = self.map_state().waiters.lock().unwrap();
+            let map_waiters_guard = self.map_state().waiters.lock()?;
             map_waiters_guard.get(key).map_or(false, |q| !q.is_empty())
         };
 
@@ -753,47 +770,51 @@ impl RedisState<Arc<str>, RedisValue>{
             None  
         };
 
-        {
-            let mut map_guard = self.map_state().map.write().unwrap();
-            result = map_guard.entry(key.clone())
-            .or_insert(RedisValue::Stream(StreamValue::new()))
-            .update_stream(&commands[2], pairs_grouped);
-        }
+        let result = {
+            let mut map_guard = self.map_state().map.write()?;
+            map_guard
+                .entry(key.clone())
+                .or_insert(RedisValue::Stream(StreamValue::new()))
+                .update_stream(&commands[2], pairs_grouped)?
+        };
 
         if let Some(pairs) = pairs_for_waiter {
-            let mut map_waiters_guard = self.map_state().waiters.lock().unwrap();
-            if let Some(waiters_queue) = map_waiters_guard.get_mut(key){
+            let mut map_waiters_guard = self.map_state().waiters.lock()?;
+            if let Some(waiters_queue) = map_waiters_guard.get_mut(key) {
                 let stream_value = StreamValue::new_blocked(commands[2].clone(), &pairs);
-                while let Some(waiter) = waiters_queue.pop_front(){
-                    match waiter.try_send((key.clone(), RedisValue::Stream(stream_value.clone()))){
+                while let Some(waiter) = waiters_queue.pop_front() {
+                    match waiter.try_send((key.clone(), RedisValue::Stream(stream_value.clone()))) {
                         Ok(_) => break,
-                        Err(TrySendError::Full(_)) => return format!("ERR_TOO_MANY_WAITERS"),
+                        Err(TrySendError::Full(_)) => return Err(RedisError::TooManyWaiters),
                         Err(TrySendError::Closed(_)) => continue,
                     }
                 }
             }
         }
 
-        result
+        Ok(result)
     } 
 
-    pub fn xrange(&self, commands: &Vec<Arc<str>>) -> String {
+    pub fn xrange(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let mut encoded_array = String::new();
-        let values = self.map_state().map.read().unwrap()
-        .get(&commands[1])
-        .unwrap() // no case for nil
-        .get_stream_range(&commands[2], Some(&commands[3]));
+        let map_guard = self.map_state().map.read()?;
+        let stream_value = map_guard.get(&commands[1])
+            .ok_or_else(|| RedisError::KeyNotFound(format!("Key {} not found", commands[1])))?;
+        let values = stream_value.get_stream_range(&commands[2], Some(&commands[3]));
         if !values.is_empty() {
             encode_resp_value_array(&mut encoded_array, &values);
-            encoded_array
-        } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
+            Ok(encoded_array)
+        } else {
+            Ok(format!("*-1\r\n"))
+        }
     } 
 
-    pub async fn xread(&self, commands: &Vec<Arc<str>>) -> String {
+    pub async fn xread(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         match commands[1].as_ref(){
             "streams" => {
+                let map_guard = self.map_state().map.read()?;
                 let key_tokens = commands.iter().skip(2)
-                .filter(|token| self.map_state().map.read().unwrap().get(*token).is_some())
+                .filter(|token| map_guard.get(*token).is_some())
                 .collect::<Vec<_>>();
 
                 let id_tokens = commands.iter().skip(2 + key_tokens.len()).collect::<Vec<_>>();
@@ -801,28 +822,30 @@ impl RedisState<Arc<str>, RedisValue>{
                 let mut key_entries = Vec::new();
 
                 for (key, id) in key_tokens.iter().zip(id_tokens){
-                    let values = self.map_state().map.read().unwrap()
+                    let values = map_guard
                     .get(*key)
-                    .unwrap() // no case for nil
+                    .ok_or_else(|| RedisError::KeyNotFound(format!("Key {} not found", key.as_ref())))?
                     .get_stream_range(id, None);
                     if !values.is_empty() { key_entries.push(json!([key.as_ref(), values]));}
                 }
         
                 if !key_entries.is_empty() {
                     encode_resp_value_array(&mut encoded_array, &key_entries);
-                    encoded_array
-                } else { format!("ERR_NOT_SUPPORTED") } // fix error handling
+                    Ok(encoded_array)
+                } else {
+                    Ok(format!("*-1\r\n"))
+                }
             },
 
             "block" => {
-                let timeout = &commands[2].parse::<u64>().unwrap();
+                let timeout = commands[2].parse::<u64>()?;
                 let key = &commands[4];
 
                 let mut receiver = {
-                    let mut waiters_guard = self.map_state().waiters.lock().unwrap();
+                    let mut waiters_guard = self.map_state().waiters.lock()?;
                     let queue = waiters_guard.entry(key.clone()).or_insert(VecDeque::new());
                     if queue.len() > 10000{
-                        return format!("ERR_TOO_MANY_XREAD_WAITERS_FOR_THE_KEY")
+                        return Err(RedisError::Other("ERR_TOO_MANY_XREAD_WAITERS_FOR_THE_KEY".to_string()))
                     }
 
                     let (sender, receiver) = mpsc::channel(1);
@@ -830,17 +853,17 @@ impl RedisState<Arc<str>, RedisValue>{
                     receiver
                 };
 
-                if *timeout == 0 {
+                if timeout == 0 {
                     match receiver.recv().await{
                         Some((key_arc, redis_val)) => {
                             if let Some(value_array) = redis_val.get_blocked_result(){
                                 let mut encoded_array = String::new();
                                 encode_resp_value_array(&mut encoded_array, &vec![json!([key_arc.as_ref(), value_array])]);
-                                return encoded_array
+                                return Ok(encoded_array)
                             }
-                            format!("*-1\r\n")
+                            Ok(format!("*-1\r\n"))
                         },
-                        None => format!("*-1\r\n")
+                        None => Ok(format!("*-1\r\n"))
                     }
                 } else {
                     tokio::select! {
@@ -849,41 +872,43 @@ impl RedisState<Arc<str>, RedisValue>{
                                 if let Some(value_array) = redis_val.get_blocked_result(){
                                     let mut encoded_array = String::new();
                                     encode_resp_value_array(&mut encoded_array, &vec![json!([key_arc.as_ref(), value_array])]);
-                                    return encoded_array
+                                    return Ok(encoded_array)
                                 }
-                                format!("*-1\r\n")
-                            } else {format!("*-1\r\n")}
+                                Ok(format!("*-1\r\n"))
+                            } else {
+                                Ok(format!("*-1\r\n"))
+                            }
                         },
 
-                        _ = sleep(Duration::from_millis(*timeout)) => {
-                            format!("*-1\r\n")
+                        _ = sleep(Duration::from_millis(timeout)) => {
+                            Ok(format!("*-1\r\n"))
                         },
                     }
                 }
             },
 
-            _ => format!("ERR_NOT_SUPPORTED")
+            _ => Err(RedisError::InvalidCommand("Invalid XREAD subcommand".to_string()))
         }
     }
 
-    pub fn incr(&self, commands: &Vec<Arc<str>>) -> String {
-        let mut map_guard = self.map_state().map.write().unwrap();
+    pub fn incr(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let mut map_guard = self.map_state().map.write()?;
         let val = map_guard.entry(commands[1].clone()).or_insert(RedisValue::Number(0));
         match val{
             RedisValue::Number(n) => {
                 *n += 1;
-                format!(":{}\r\n", n)
+                Ok(format!(":{}\r\n", n))
             },
-            _ => format!("-ERR value is not an integer or out of range\r\n"),
+            _ => Ok(format!("-ERR value is not an integer or out of range\r\n")), //tester expects this format
         }
     } 
 
-    pub fn multi(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>) -> String {
+    pub fn multi(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>) -> RedisResult<String> {
         client_state.set_multi_queue_mode(true);
-        format!("+OK\r\n")
+        Ok(format!("+OK\r\n"))
     } 
 
-    pub fn info(&self, commands: &Vec<Arc<str>>) -> String {
+    pub fn info(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         match commands[1].to_uppercase().as_str(){
             "REPLICATION" => {
                 let mut lines = Vec::new();
@@ -891,18 +916,18 @@ impl RedisState<Arc<str>, RedisValue>{
                     lines.push(format!("{}:{}", key, value));
                 }
                 let content = lines.join("\r\n");
-                format!("${}\r\n{}\r\n", content.len(), content)
+                Ok(format!("${}\r\n{}\r\n", content.len(), content))
             }
-            _ => format!("NOT_SUPPORTED"),
+            _ => Err(RedisError::InvalidCommand(format!("INFO subcommand '{}' not supported", commands[1]))),
         }
     } 
 
-    pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> String{
+    pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){
             client_state.get_subscriptions().0
         } else {
-            let mut channel_guard = self.channels_state().channels_map.write().unwrap();
+            let mut channel_guard = self.channels_state().channels_map.write()?;
             let (count, client_set) = channel_guard.entry(commands[1].clone()).or_insert((0, HashSet::new()));
             *count += 1;
             client_set.insert(client.clone());
@@ -913,26 +938,32 @@ impl RedisState<Arc<str>, RedisValue>{
             subscriptions.0
         };
 
-        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", commands[0].len(), commands[0].to_lowercase(), commands[1].len(), commands[1], subs_count)
+        Ok(format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", commands[0].len(), commands[0].to_lowercase(), commands[1].len(), commands[1], subs_count))
     }
 
-    pub async fn handle_subscriber(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>, commands: &Vec<Arc<str>>){
+    pub async fn handle_subscriber(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>, commands: &Vec<Arc<str>>) -> RedisResult<()>{
         if client_state.has_receiver() {
             let (sender, receiver) = mpsc::channel(1000);
             client_state.set_channel(sender, receiver);
         }
 
         if let Some(sender) = client_state.get_sub_sender() {
-            let mut subs_guard = self.channels_state().subscribers.lock().unwrap();
+            let mut subs_guard = self.channels_state().subscribers.lock()?;
             subs_guard.entry(commands[1].clone()).or_insert(Vec::new()).push(sender.clone());
         }
+        Ok(())
     }
 
-    pub fn publish(&self, commands: &Vec<Arc<str>>) -> String{
-        let subs = self.channels_state().channels_map.read().unwrap().get(&commands[1]).unwrap().0;
+    pub fn publish(&self, commands: &Vec<Arc<str>>) -> RedisResult<String>{
+        let channel_guard = self.channels_state().channels_map.read()?;
+        let subs = channel_guard.get(&commands[1])
+            .map(|(count, _)| *count)
+            .unwrap_or(0);
         let channel_name = &commands[1];
         let messages = Arc::new(commands.iter().skip(2).cloned().collect::<Vec<_>>());
-        let mut subs_guard = self.channels_state().subscribers.lock().unwrap();
+        drop(channel_guard);
+        
+        let mut subs_guard = self.channels_state().subscribers.lock()?;
         if let Some(subs) = subs_guard.get_mut(&commands[1]){
             subs.retain(|sender|
                 match sender.try_send((channel_name.clone(), messages.clone())){
@@ -942,11 +973,11 @@ impl RedisState<Arc<str>, RedisValue>{
             })
         }
 
-        format!(":{}\r\n", subs)
+        Ok(format!(":{}\r\n", subs))
     }
 
-    pub fn unsubscribe(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &str, commands: &Vec<Arc<str>>) -> String{
-        let mut channel_guard = self.channels_state().channels_map.write().unwrap();
+    pub fn unsubscribe(&self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &str, commands: &Vec<Arc<str>>) -> RedisResult<String>{
+        let mut channel_guard = self.channels_state().channels_map.write()?;
         if let Some((count, client_set)) = channel_guard.get_mut(&commands[1]){
             *count -= 1;
             client_set.remove(client);
@@ -957,7 +988,7 @@ impl RedisState<Arc<str>, RedisValue>{
         subscriptions.0 -= 1;
         let subs_count = subscriptions.0;
 
-        format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", commands[0].len(), commands[0].to_lowercase(), commands[1].len(), commands[1], subs_count)
+        Ok(format!("*3\r\n${}\r\n{}\r\n${}\r\n{}\r\n:{}\r\n", commands[0].len(), commands[0].to_lowercase(), commands[1].len(), commands[1], subs_count))
     }
 
 }

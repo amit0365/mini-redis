@@ -1,6 +1,6 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use std::{str::from_utf8, sync::Arc};
-use crate::{protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::encode_resp_array_arc};
+use crate::{error::RedisResult, protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::encode_resp_array_arc};
 use crate::utils::{encode_resp_array_str, parse_multiple_resp, parse_rdb_with_trailing_commands, ServerConfig};
 use crate::commands::execute_commands;
 
@@ -11,8 +11,8 @@ pub async fn process_commands_from_master(
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     client_state: &mut ClientState<Arc<str>, Arc<str>>,
     local_replicas_state: &mut ReplicasState,
-) {
-    let all_commands = parse_multiple_resp(commands_data);
+) -> RedisResult<()>{
+    let all_commands = parse_multiple_resp(commands_data)?;
     let master_literal = Arc::from("master");
     for commands in all_commands {
         let is_getack = commands.len() == 3
@@ -28,14 +28,16 @@ pub async fn process_commands_from_master(
             local_replicas_state,
             &master_literal, // todo fix this properly
             &commands
-        ).await;
+        ).await?;
 
         if is_getack {
-            master_stream.write_all(response.as_bytes()).await.unwrap();
+            master_stream.write_all(response.as_bytes()).await?;
         }
 
         client_state.add_num_bytes_synced(encode_resp_array_arc(&commands).len()); //todo fix extra work reencoding again just for length
     }
+
+    Ok(())
 }
 
 pub async fn handle_handshake(
@@ -48,22 +50,22 @@ pub async fn handle_handshake(
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     client_state: &mut ClientState<Arc<str>, Arc<str>>,
     local_replicas_state: &mut ReplicasState,
-) {
+) -> RedisResult<()> {
     // JUST FULLRESYNC IN BUFFER
     if let Ok(buffer_str) = from_utf8(buf) {
         let parts: Vec<&str> = buffer_str.split("\r\n").collect();
         match parts[0] {
             "+PONG" => {
                 let replconf_msg1 = encode_resp_array_str(&["REPLCONF", "listening-port", &port]);
-                master_stream.write(replconf_msg1.as_bytes()).await.unwrap();
+                master_stream.write(replconf_msg1.as_bytes()).await?;
                 let replconf_msg2 = encode_resp_array_str(&["REPLCONF", "capa", "psync2"]);
-                master_stream.write(replconf_msg2.as_bytes()).await.unwrap();
+                master_stream.write(replconf_msg2.as_bytes()).await?;
             },
             "+OK" => {
                 *replconf_ack_count += 1;
                 if *replconf_ack_count == 2 {
                     let psync_msg = encode_resp_array_str(&["PSYNC", "?", "-1"]);
-                    master_stream.write(psync_msg.as_bytes()).await.unwrap();
+                    master_stream.write(psync_msg.as_bytes()).await?;
                 }
             }
             _ => {
@@ -72,12 +74,12 @@ pub async fn handle_handshake(
                 }
             }
         }
-        return;
+        return Ok(());
     }
 
     // PARSE RDB NEXT
     if *expecting_rdb {
-        if let Some(rdb_end) = parse_rdb_with_trailing_commands(buf, 0) {
+        if let Ok(rdb_end) = parse_rdb_with_trailing_commands(buf, 0) {
             if rdb_end <= buf.len() {
                 *handshake_complete = true;
                 *expecting_rdb = false;
@@ -89,11 +91,11 @@ pub async fn handle_handshake(
                         local_state,
                         client_state,
                         local_replicas_state,
-                    ).await;
+                    ).await?;
                 }
             }
         }
-        return;
+        return Ok(());
     }
 
     // ELSE FULLRESYNC + RDB combined
@@ -107,7 +109,7 @@ pub async fn handle_handshake(
         }
     }
 
-    if let Some(rdb_end) = parse_rdb_with_trailing_commands(buf, rdb_start) {
+    if let Ok(rdb_end) = parse_rdb_with_trailing_commands(buf, rdb_start) {
         if rdb_end < buf.len() {
             process_commands_from_master(
                 &buf[rdb_end..],
@@ -115,9 +117,11 @@ pub async fn handle_handshake(
                 local_state,
                 client_state,
                 local_replicas_state,
-            ).await;
+            ).await?;
         }
     }
+    
+    Ok(())
 }
 
 pub async fn handle_replication_commands(
@@ -126,14 +130,14 @@ pub async fn handle_replication_commands(
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     client_state: &mut ClientState<Arc<str>, Arc<str>>,
     local_replicas_state: &mut ReplicasState,
-) {
+) -> RedisResult<()> {
     process_commands_from_master(
         buf,
         master_stream,
         local_state,
         client_state,
         local_replicas_state,
-    ).await;
+    ).await
 }
 
 pub fn initialize_master_state(state: &mut RedisState<Arc<str>, RedisValue>) {
@@ -168,14 +172,20 @@ pub async fn initialize_replica_connection(
         let mut replconf_ack_count = 0;
 
         let ping_msg = encode_resp_array_str(&["PING"]);
-        master_stream.write(ping_msg.as_bytes()).await.unwrap();
+        if let Err(e) = master_stream.write(ping_msg.as_bytes()).await {
+            eprintln!("Failed to send PING to master: {}", e);
+            return;
+        }
 
         loop {
             let mut buf = [0; 512];
             match master_stream.read(&mut buf).await {
-                Ok(0) => (),
+                Ok(0) => {
+                    eprintln!("Master connection closed");
+                    break;
+                },
                 Ok(n) => {
-                    if !handshake_complete {
+                    let result = if !handshake_complete {
                         handle_handshake(
                             &buf[..n],
                             &mut handshake_complete,
@@ -186,7 +196,7 @@ pub async fn initialize_replica_connection(
                             &mut local_state,
                             &mut client_state,
                             &mut local_replicas_state,
-                        ).await;
+                        ).await
                     } else {
                         handle_replication_commands(
                             &buf[..n],
@@ -194,10 +204,18 @@ pub async fn initialize_replica_connection(
                             &mut local_state,
                             &mut client_state,
                             &mut local_replicas_state,
-                        ).await;
+                        ).await
+                    };
+                    
+                    if let Err(e) = result {
+                        eprintln!("Replication error: {}", e);
+                        break;
                     }
                 },
-                Err(_) => (),
+                Err(e) => {
+                    eprintln!("Failed to read from master: {}", e);
+                    break;
+                },
             }
         }
     })

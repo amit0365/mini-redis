@@ -1,6 +1,7 @@
 use std::{collections::{BTreeMap, HashMap}, fmt, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
 use serde::Serialize;
 use serde_json::{Value, json};
+use crate::error::{RedisError, RedisResult};
 
 #[derive(Clone)]
 pub enum RedisValue{
@@ -169,18 +170,18 @@ impl RedisValue{
         }
     }
 
-    pub fn update_stream(&mut self, id: &Arc<str>, pairs: Vec<(Arc<str>, Arc<str>)>) -> String{
+    pub fn update_stream(&mut self, id: &Arc<str>, pairs: Vec<(Arc<str>, Arc<str>)>) -> RedisResult<String>{
         match self{
             RedisValue::String(_) | RedisValue::Number(_) |
             RedisValue::StringWithTimeout(_) | RedisValue::Commands(_) => {
-                format!("not supported")
+                Err(RedisError::WrongType("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()))
             },
             RedisValue::Stream(stream) => {
                 let (new_id_time, new_id_seq) = match id.as_ref(){
                     "*" => {
                         let millis = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .map_err(|e| RedisError::Other(format!("System time error: {}", e)))?
                             .as_millis();
 
                         let id_sequence_num = stream.time_map
@@ -193,14 +194,14 @@ impl RedisValue{
                     _ => {
                         let (id_pre, id_post) = match id.split_once("-") {
                             Some(parts) => parts,
-                            None => return format!("-ERR The ID"),
+                            None => return Err(RedisError::InvalidStreamId("Invalid ID format".to_string())),
                         };
 
                         if id_pre.is_empty() || id_post.is_empty(){
-                            return format!("-ERR The ID");
+                            return Err(RedisError::InvalidStreamId("ID parts cannot be empty".to_string()));
                         }
 
-                        let id_millisecs = id_pre.parse::<u128>().unwrap();
+                        let id_millisecs = id_pre.parse::<u128>()?;
                         let id_sequence_num = match id_post{
                             "*" => {
                                 stream.time_map
@@ -208,22 +209,22 @@ impl RedisValue{
                                     .map(|&seq| seq + 1)
                                     .unwrap_or(if id_millisecs == 0 { 1 } else { 0 })
                             },
-                            _ => id_post.parse::<u64>().unwrap(),
+                            _ => id_post.parse::<u64>()?,
                         };
 
                         if id_millisecs == 0 && id_sequence_num == 0 {
-                            return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                            return Ok(format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")) //tester expects this format
                         }
 
                         if !stream.last_id.is_empty() {
                             if let Some((last_id_pre, last_id_post)) = stream.last_id.split_once("-"){
                                 if !last_id_pre.is_empty() && !last_id_post.is_empty(){
-                                    let last_id_millisecs = last_id_pre.parse::<u128>().unwrap();
-                                    let last_id_sequence_num = last_id_post.parse::<u64>().unwrap();
+                                    let last_id_millisecs = last_id_pre.parse::<u128>()?;
+                                    let last_id_sequence_num = last_id_post.parse::<u64>()?;
 
                                     if last_id_millisecs > id_millisecs ||
                                        (last_id_millisecs == id_millisecs && last_id_sequence_num >= id_sequence_num) {
-                                        return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+                                        return Ok(format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")) //tester expects this format
                                     }
                                 }
                             }
@@ -243,7 +244,7 @@ impl RedisValue{
                 stream.last_id = new_id_arc.clone();
                 stream.insert(new_id_arc, new_id_time, new_id_seq, pairs);
 
-                format!("${}\r\n{}\r\n", new_id_string.len(), new_id_string)
+                Ok(format!("${}\r\n{}\r\n", new_id_string.len(), new_id_string))
             },
         }
     }

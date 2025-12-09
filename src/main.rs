@@ -5,6 +5,7 @@ mod protocol;
 mod utils;
 mod commands;
 mod client;
+mod error;
 
 
 #[tokio::main]

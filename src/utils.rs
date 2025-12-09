@@ -3,6 +3,7 @@ use std::str::from_utf8;
 use std::sync::Arc;
 
 use crate::protocol::RedisValue;
+use crate::error::{RedisError, RedisResult};
 
 pub const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
 
@@ -47,15 +48,17 @@ pub fn collect_as_strings<I>(iter: I) -> Vec<Arc<str>>
         .collect::<Vec<_>>()
     }
 
-pub fn parse_wrapback(idx: i64, len: usize) -> usize{
+pub fn parse_wrapback(idx: i64, len: usize) -> RedisResult<usize> {
         if idx.is_negative() {
-            let idx_abs= idx.unsigned_abs() as usize;
+            let idx_abs = idx.unsigned_abs() as usize;
             if idx_abs <= len {
-                len - idx.unsigned_abs() as usize
+                Ok(len - idx.unsigned_abs() as usize)
             } else {
-                0
+                Ok(0)
             }
-        } else { idx.try_into().unwrap() }
+        } else {
+            idx.try_into().map_err(|_| RedisError::ParseInt(format!("Failed to convert {} to usize", idx)))
+        }
     }
 
 pub fn encode_resp_array_arc(array: &[Arc<str>]) -> String{
@@ -104,8 +107,8 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) {
         }
     }
     
-pub fn parse_resp(buf: &[u8]) -> Option<Vec<Arc<str>>>{
-    let string_buf = std::str::from_utf8(buf).unwrap();
+pub fn parse_resp(buf: &[u8]) -> RedisResult<Vec<Arc<str>>> {
+    let string_buf = std::str::from_utf8(buf)?;
     let tokens = string_buf.split("\r\n").collect::<Vec<&str>>();
     let commands = tokens
         .iter()
@@ -115,10 +118,10 @@ pub fn parse_resp(buf: &[u8]) -> Option<Vec<Arc<str>>>{
         .map(|str| Arc::from(*str))
         .collect::<Vec<Arc<str>>>();
 
-    Some(commands)
+    Ok(commands)
 }
 
-pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<Arc<str>>> {
+pub fn parse_multiple_resp(buf: &[u8]) -> RedisResult<Vec<Vec<Arc<str>>>> {
     let mut result = Vec::new();
     let mut pos = 0;
 
@@ -138,15 +141,11 @@ pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<Arc<str>>> {
             break;
         }
 
-        let array_size_str = match std::str::from_utf8(&buf[pos + 1..i]) {
-            Ok(s) => s,
-            Err(_) => break,
-        };
+        let array_size_str = std::str::from_utf8(&buf[pos + 1..i])
+            .map_err(|e| RedisError::InvalidUtf8(e.to_string()))?;
 
-        let array_size: usize = match array_size_str.parse() {
-            Ok(n) => n,
-            Err(_) => break,
-        };
+        let array_size: usize = array_size_str.parse()
+            .map_err(|e: std::num::ParseIntError| RedisError::ParseInt(e.to_string()))?;
 
         // Move past *N\r\n
         i += 2; // skip \r\n
@@ -156,7 +155,7 @@ pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<Arc<str>>> {
         // Parse each bulk string in the array
         for _ in 0..array_size {
             if i >= buf.len() || buf[i] != b'$' {
-                return result; // Incomplete command
+                return Ok(result); // Incomplete command, return what we have
             }
 
             // Parse bulk string length
@@ -166,31 +165,25 @@ pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<Arc<str>>> {
             }
 
             if j >= buf.len() - 1 {
-                return result; // Incomplete
+                return Ok(result); // Incomplete
             }
 
-            let length_str = match std::str::from_utf8(&buf[i + 1..j]) {
-                Ok(s) => s,
-                Err(_) => return result,
-            };
+            let length_str = std::str::from_utf8(&buf[i + 1..j])
+                .map_err(|e| RedisError::InvalidUtf8(e.to_string()))?;
 
-            let length: usize = match length_str.parse() {
-                Ok(n) => n,
-                Err(_) => return result,
-            };
+            let length: usize = length_str.parse()
+                .map_err(|e: std::num::ParseIntError| RedisError::ParseInt(e.to_string()))?;
 
             // Move past $N\r\n
             j += 2;
 
             if j + length > buf.len() {
-                return result; // Incomplete
+                return Ok(result); // Incomplete
             }
 
             // Extract the actual string
-            let command = match std::str::from_utf8(&buf[j..j + length]) {
-                Ok(s) => s,
-                Err(_) => return result,
-            };
+            let command = std::str::from_utf8(&buf[j..j + length])
+                .map_err(|e| RedisError::InvalidUtf8(e.to_string()))?;
             commands.push(Arc::from(command));
 
             // Move past the string and \r\n
@@ -201,25 +194,26 @@ pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<Arc<str>>> {
         pos = i;
     }
 
-    result
+    Ok(result)
 }
 
 pub fn parse_rdb_with_trailing_commands(
     buf: &[u8],
     rdb_start: usize,
-) -> Option<usize> {
+) -> RedisResult<usize> {
     if rdb_start >= buf.len() || buf[rdb_start] != b'$' {
-        return None;
+        return Err(RedisError::InvalidRespFormat("Invalid RDB format".to_string()));
     }
 
-    let size_end = buf[rdb_start..].windows(2).position(|w| w == b"\r\n")?;
+    let size_end = buf[rdb_start..].windows(2).position(|w| w == b"\r\n")
+        .ok_or_else(|| RedisError::InvalidRespFormat("Missing CRLF in RDB".to_string()))?;
     let size_end = rdb_start + size_end;
 
-    let size_str = from_utf8(&buf[rdb_start + 1..size_end]).ok()?;
-    let rdb_size = size_str.parse::<usize>().ok()?;
+    let size_str = from_utf8(&buf[rdb_start + 1..size_end])?;
+    let rdb_size = size_str.parse::<usize>()?;
 
     let rdb_data_start = size_end + 2;
     let rdb_end = rdb_data_start + rdb_size;
 
-    Some(rdb_end)
+    Ok(rdb_end)
 }
