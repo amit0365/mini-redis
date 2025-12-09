@@ -38,13 +38,13 @@ impl ServerConfig {
     }
 }
 
-pub fn collect_as_strings<I>(iter: I) -> Vec<String>
+pub fn collect_as_strings<I>(iter: I) -> Vec<Arc<str>>
     where 
         I: IntoIterator<Item = RedisValue>
     {
         iter.into_iter()
         .filter_map(|v| v.as_string().cloned())
-        .collect::<Vec<String>>()
+        .collect::<Vec<_>>()
     }
 
 pub fn parse_wrapback(idx: i64, len: usize) -> usize{
@@ -59,6 +59,14 @@ pub fn parse_wrapback(idx: i64, len: usize) -> usize{
     }
     
 pub fn encode_resp_array(array: &Vec<String>) -> String{
+        let mut encoded_array = format!["*{}\r\n", array.len()];
+        for item in array {
+            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
+        }
+        encoded_array
+    }
+
+pub fn encode_resp_array_arc(array: &Vec<Arc<str>>) -> String{
         let mut encoded_array = format!["*{}\r\n", array.len()];
         for item in array {
             encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
@@ -82,7 +90,7 @@ pub fn encode_resp_array_str(array: &[&str]) -> String{
         encoded_array
     }
 
-pub fn encode_resp_array_with_arc(prefix: &Vec<String>, arc_message: &Arc<Vec<String>>) -> String {
+pub fn encode_resp_array_arc_with_prefix(prefix: &Vec<Arc<str>>, arc_message: &Arc<Vec<Arc<str>>>) -> String {
         let total_len = prefix.len() + arc_message.len();
         let mut encoded_array = format!["*{}\r\n", total_len];
 
@@ -112,7 +120,7 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) {
         }
     }
     
-pub fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
+pub fn parse_resp(buf: &[u8]) -> Option<Vec<Arc<str>>>{
     let string_buf = std::str::from_utf8(buf).unwrap();
     let tokens = string_buf.split("\r\n").collect::<Vec<&str>>();
     let commands = tokens
@@ -120,13 +128,13 @@ pub fn parse_resp(buf: &[u8]) -> Option<Vec<String>>{
         .skip(2) //skip msg len
         .step_by(2) //skip \r\n
         .filter(|x| !x.is_empty())
-        .map(|str| str.to_string())
-        .collect::<Vec<String>>();
+        .map(|str| Arc::from(*str))
+        .collect::<Vec<Arc<str>>>();
 
     Some(commands)
 }
 
-pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<String>> {
+pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<Arc<str>>> {
     let mut result = Vec::new();
     let mut pos = 0;
 
@@ -199,7 +207,7 @@ pub fn parse_multiple_resp(buf: &[u8]) -> Vec<Vec<String>> {
                 Ok(s) => s,
                 Err(_) => return result,
             };
-            commands.push(command.to_string());
+            commands.push(Arc::from(command));
 
             // Move past the string and \r\n
             i = j + length + 2;

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::parse_resp;
@@ -6,10 +8,10 @@ use crate::commands::execute_commands;
 pub async fn handle_replica_mode(
     stream: &mut TcpStream,
     buf: &mut [u8; 512],
-    client_state: &mut ClientState<String, String>,
-    local_state: &mut RedisState<String, RedisValue>,
+    client_state: &mut ClientState<Arc<str>, Arc<str>>,
+    local_state: &mut RedisState<Arc<str>, RedisValue>,
     local_replicas_state: &mut ReplicasState,
-    addr: String,
+    addr: &Arc<str>,
 ) -> bool {
     if let Some(receiver) = client_state.get_replica_receiver_mut() {
         tokio::select! {

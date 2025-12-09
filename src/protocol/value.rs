@@ -4,11 +4,11 @@ use serde_json::{Value, json};
 
 #[derive(Clone)]
 pub enum RedisValue{
-    String(String),
+    String(Arc<str>),
     Number(u64),
-    StringWithTimeout((String, Instant)),
-    Stream(StreamValue<String, String>),
-    Commands(Vec<String>),
+    StringWithTimeout((Arc<str>, Instant)),
+    Stream(StreamValue<Arc<str>, Arc<str>>),
+    Commands(Vec<Arc<str>>),
 }
 
 #[derive(Clone)]
@@ -37,16 +37,16 @@ impl<K: Serialize, V: Serialize> Serialize for StreamValue<K, V> {
     }
 }
 
-impl StreamValue<String, String>{
+impl StreamValue<Arc<str>, Arc<str>>{
     pub fn new() -> Self {
         StreamValue { last_id: Arc::from(""), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (Arc::from(""), Vec::new())}
     }
 
-    pub fn new_blocked(id: Arc<str>, pairs_grouped: &Vec<(String, String)>) -> Self {
+    pub fn new_blocked(id: Arc<str>, pairs_grouped: &Vec<(Arc<str>, Arc<str>)>) -> Self {
         StreamValue { last_id: Arc::from(""), time_map: HashMap::new(), map: BTreeMap::new() , waiters_value: (id, pairs_grouped.to_vec())}
     }
 
-    pub fn insert(&mut self, id: Arc<str>, id_time: u128, id_seq: u64, pairs_grouped: Vec<(String, String)>) -> Option<(u128, u64, Vec<(String, String)>)> {
+    pub fn insert(&mut self, id: Arc<str>, id_time: u128, id_seq: u64, pairs_grouped: Vec<(Arc<str>, Arc<str>)>) -> Option<(u128, u64, Vec<(Arc<str>, Arc<str>)>)> {
         self.map.insert(id, (id_time, id_seq, pairs_grouped))
     }
 }
@@ -63,7 +63,7 @@ impl fmt::Display for RedisValue {
     }
 }
 
-pub fn redis_value_as_string(val: RedisValue) -> Option<String> {
+pub fn redis_value_as_string(val: RedisValue) -> Option<Arc<str>> {
     match val{
         RedisValue::String(s) => Some(s),
         RedisValue::StringWithTimeout((s, _)) => Some(s),
@@ -74,7 +74,7 @@ pub fn redis_value_as_string(val: RedisValue) -> Option<String> {
 }
 
 impl RedisValue{
-    pub fn as_string(&self) -> Option<&String> {
+    pub fn as_string(&self) -> Option<&Arc<str>> {
         match self{
             RedisValue::String(s) => Some(s),
             RedisValue::StringWithTimeout((s, _)) => Some(s),
@@ -91,14 +91,14 @@ impl RedisValue{
             RedisValue::StringWithTimeout((_, _)) => None,
             RedisValue::Stream(val) => {
                 let (id, pairs) = &val.waiters_value;
-                let pairs_flattened = pairs.iter().flat_map(|(id, pair)| [id, pair]).collect::<Vec<_>>();
+                let pairs_flattened = pairs.iter().flat_map(|(k, v)| [k.as_ref(), v.as_ref()]).collect::<Vec<&str>>();
                 Some(vec![json!([id.as_ref(), pairs_flattened])])
             },
             RedisValue::Commands(_) => None,
         }
     }
 
-    pub fn get_stream_range(&self, start_id: &String, stop_id: Option<&String>) -> Vec<Value>{
+    pub fn get_stream_range(&self, start_id: &str, stop_id: Option<&str>) -> Vec<Value>{
         match self{
             RedisValue::String(_) => Vec::new(), // fix error handling,
             RedisValue::Number(_) => Vec::new(), // fix error handling,
@@ -111,7 +111,7 @@ impl RedisValue{
 
                     match stop_id{
                         Some(stop_id ) => {
-                            match stop_id.as_str(){
+                            match stop_id{
                                 "+" => {
                                     stop_time = None;
                                     stop_seq = None;
@@ -137,7 +137,7 @@ impl RedisValue{
 
                     let start_time: u128;
                     let start_seq: u64;
-                    if start_id.as_str() == "-"{
+                    if start_id == "-"{
                         start_time = 0;
                         start_seq = 0;
                     } else {
@@ -157,7 +157,7 @@ impl RedisValue{
                         };
 
                         if result {
-                            let flattened = pairs.iter().flat_map(|(k, v)| [k.as_str(), v.as_str()]).collect::<Vec<&str>>();
+                            let flattened = pairs.iter().flat_map(|(k, v)| [k.as_ref(), v.as_ref()]).collect::<Vec<&str>>();
                             entries.push(json!([e.0.as_ref(), flattened]));
                         }
                     });
@@ -169,104 +169,82 @@ impl RedisValue{
         }
     }
 
-    pub fn update_stream(&mut self, id: &String, pairs: Vec<(String, String)>) -> String{
+    pub fn update_stream(&mut self, id: &Arc<str>, pairs: Vec<(Arc<str>, Arc<str>)>) -> String{
         match self{
-            RedisValue::String(_) => format!("not supported"),
-            RedisValue::Number(_) => format!("not supported"),
-            RedisValue::StringWithTimeout((_, _)) => format!("not supported"),
+            RedisValue::String(_) | RedisValue::Number(_) |
+            RedisValue::StringWithTimeout(_) | RedisValue::Commands(_) => {
+                format!("not supported")
+            },
             RedisValue::Stream(stream) => {
-                let mut new_id_string = id.clone();
-                let mut new_id_time = 0;
-                let mut new_id_seq = 0;
-                match id.as_str(){
+                let (new_id_time, new_id_seq) = match id.as_ref(){
                     "*" => {
                         let millis = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis();
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis();
 
-                        let id_sequence_num;
-                        if let Some(last_sequence_num) = stream.time_map.get(&millis){
-                            id_sequence_num = last_sequence_num + 1;
-                        } else {
-                            id_sequence_num = 0
-                        }
+                        let id_sequence_num = stream.time_map
+                            .get(&millis)
+                            .map(|&seq| seq + 1)
+                            .unwrap_or(0);
 
-                        new_id_time = millis;
-                        new_id_seq = id_sequence_num;
-                        new_id_string = new_id_time.to_string() + "-" + &new_id_seq.to_string();
+                        (millis, id_sequence_num)
                     },
                     _ => {
-                        if let Some((id_pre, id_post)) = id.split_once("-"){
-                            if id_pre.is_empty() || id_post.is_empty(){
-                                return format!("-ERR The ID");
-                            }
+                        let (id_pre, id_post) = match id.split_once("-") {
+                            Some(parts) => parts,
+                            None => return format!("-ERR The ID"),
+                        };
 
-                            let id_millisecs = id_pre.parse::<u128>().unwrap();
-                            let mut id_sequence_num: u64 = 0;
-                            match id_post{
-                                "*" => {
-                                    if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs){
-                                        id_sequence_num = last_sequence_num + 1;
-                                    } else {
-                                        if id_millisecs == 0 { id_sequence_num = 1 }
-                                    }
+                        if id_pre.is_empty() || id_post.is_empty(){
+                            return format!("-ERR The ID");
+                        }
 
-                                    new_id_time = id_millisecs;
-                                    new_id_seq = id_sequence_num;
-                                    new_id_string = new_id_time.to_string() + "-" + &new_id_seq.to_string();
-                                },
-                                _ => id_sequence_num = id_post.parse::<u64>().unwrap(),
-                            }
+                        let id_millisecs = id_pre.parse::<u128>().unwrap();
+                        let id_sequence_num = match id_post{
+                            "*" => {
+                                stream.time_map
+                                    .get(&id_millisecs)
+                                    .map(|&seq| seq + 1)
+                                    .unwrap_or(if id_millisecs == 0 { 1 } else { 0 })
+                            },
+                            _ => id_post.parse::<u64>().unwrap(),
+                        };
 
-                            if id_millisecs == 0 && id_sequence_num == 0 { //empty stream
-                                return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
-                            }
+                        if id_millisecs == 0 && id_sequence_num == 0 {
+                            return format!("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+                        }
 
-                            let last_id = &stream.last_id;
-                            if last_id.is_empty(){ //new entry
-                                let new_id_arc = Arc::from(new_id_string.as_str());
-                                stream.insert(Arc::clone(&new_id_arc), id_millisecs, id_sequence_num, pairs);
-                                stream.last_id = new_id_arc;
-                                return format!("${}\r\n{}\r\n", new_id_string.len(), new_id_string)
-                            }
+                        if !stream.last_id.is_empty() {
+                            if let Some((last_id_pre, last_id_post)) = stream.last_id.split_once("-"){
+                                if !last_id_pre.is_empty() && !last_id_post.is_empty(){
+                                    let last_id_millisecs = last_id_pre.parse::<u128>().unwrap();
+                                    let last_id_sequence_num = last_id_post.parse::<u64>().unwrap();
 
-                            if let Some((last_id_pre, last_id_post)) = last_id.split_once("-"){
-                                if last_id_pre.is_empty() || last_id_post.is_empty(){
-                                    return format!("-ERR The ID");
-                                }
-
-                                let last_id_millisecs = last_id_pre.parse::<u128>().unwrap();
-                                let last_id_sequence_num = last_id_post.parse::<u64>().unwrap();
-
-                                if last_id_millisecs > id_millisecs{
-                                    return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-                                } else if last_id_millisecs == id_millisecs {
-                                    if last_id_sequence_num >= id_sequence_num {
+                                    if last_id_millisecs > id_millisecs ||
+                                       (last_id_millisecs == id_millisecs && last_id_sequence_num >= id_sequence_num) {
                                         return format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
                                     }
                                 }
                             }
-
-                            if let Some(last_sequence_num) = stream.time_map.get(&id_millisecs) { // update top sequence num for a give time
-                                if id_sequence_num > *last_sequence_num { stream.time_map.insert(id_millisecs, id_sequence_num);}
-                            } else {
-                                stream.time_map.insert(id_millisecs, id_sequence_num);
-                            }
-
-                            let new_id_arc = Arc::from(new_id_string.as_str());
-                            stream.last_id = Arc::clone(&new_id_arc);
-                            new_id_time = id_millisecs;
-                            new_id_seq = id_sequence_num;
                         }
-                    },
-                }
 
-                let new_id_arc = Arc::from(new_id_string.as_str());
+                        stream.time_map
+                            .entry(id_millisecs)
+                            .and_modify(|seq| *seq = (*seq).max(id_sequence_num))
+                            .or_insert(id_sequence_num);
+
+                        (id_millisecs, id_sequence_num)
+                    },
+                };
+
+                let new_id_string = format!("{}-{}", new_id_time, new_id_seq);
+                let new_id_arc: Arc<str> = Arc::from(new_id_string.as_str());
+                stream.last_id = new_id_arc.clone();
                 stream.insert(new_id_arc, new_id_time, new_id_seq, pairs);
+
                 format!("${}\r\n{}\r\n", new_id_string.len(), new_id_string)
             },
-            RedisValue::Commands(_) => format!("not supported"),
         }
     }
 }

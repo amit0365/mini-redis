@@ -24,7 +24,7 @@ pub fn can_accept_connection(connection_count: &Arc<AtomicUsize>, max: usize) ->
 pub fn spawn_client_handler(
     stream: TcpStream,
     addr: SocketAddr,
-    state: RedisState<String, RedisValue>,
+    state: RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
     connection_count: Arc<AtomicUsize>,
 ) {
@@ -36,7 +36,7 @@ pub fn spawn_client_handler(
 pub async fn handle_client_connection(
     mut stream: TcpStream,
     addr: SocketAddr,
-    state: RedisState<String, RedisValue>,
+    state: RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
     connection_count: Arc<AtomicUsize>,
 ) {
@@ -44,6 +44,7 @@ pub async fn handle_client_connection(
     let mut local_state = state;
     let mut local_replicas_state = replicas_state;
     let mut client_state = ClientState::new();
+    let client_addr = Arc::from(addr.to_string());
 
     loop {
         if client_state.is_subscribe_mode() {
@@ -52,7 +53,7 @@ pub async fn handle_client_connection(
                 &mut buf,
                 &mut client_state,
                 &mut local_state,
-                &addr.to_string(),
+                &client_addr,
             ).await {
                 break;
             }
@@ -63,7 +64,7 @@ pub async fn handle_client_connection(
                 &mut client_state,
                 &mut local_state,
                 &mut local_replicas_state,
-                addr.to_string(),
+                &client_addr,
             ).await {
                 break;
             }
@@ -74,7 +75,7 @@ pub async fn handle_client_connection(
                 &mut client_state,
                 &mut local_state,
                 &mut local_replicas_state,
-                addr.to_string(),
+                &client_addr,
             ).await {
                 break;
             }

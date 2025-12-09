@@ -1,20 +1,23 @@
+use std::sync::Arc;
+
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::{protocol::{ClientState, RedisState, RedisValue}, utils::encode_resp_array_str};
-use crate::utils::{encode_resp_array, encode_resp_array_with_arc, parse_resp};
+use crate::utils::{encode_resp_array_arc_with_prefix, parse_resp};
 
 pub async fn handle_subscribe_mode(
     stream: &mut TcpStream,
     buf: &mut [u8; 512],
-    client_state: &mut ClientState<String, String>,
-    local_state: &mut RedisState<String, RedisValue>,
-    addr: &String,
+    client_state: &mut ClientState<Arc<str>, Arc<str>>,
+    local_state: &mut RedisState<Arc<str>, RedisValue>,
+    addr: &Arc<str>,
 ) -> bool {
+    let message_literal_arc = Arc::from("message");
     if let Some(receiver) = client_state.get_sub_receiver_mut() {
         tokio::select! {
             msg = receiver.recv() => {
                 if let Some((channel_name_arc, message)) = msg {
-                    let prefix = vec!["message".to_string(), channel_name_arc.to_string()];
-                    let response = encode_resp_array_with_arc(&prefix, &message);
+                    let prefix = vec![message_literal_arc, channel_name_arc];
+                    let response = encode_resp_array_arc_with_prefix(&prefix, &message);
                     stream.write_all(response.as_bytes()).await.unwrap();
                 }
                 true

@@ -2,23 +2,23 @@ use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
-use crate::utils::{EMPTY_RDB_FILE, encode_resp_array, encode_resp_array_str};
+use crate::utils::{EMPTY_RDB_FILE, encode_resp_array, encode_resp_array_arc, encode_resp_array_str};
 
 pub async fn execute_commands(
     stream: &mut TcpStream,
     write_to_stream: bool,
-    local_state: &mut RedisState<String, RedisValue>,
-    client_state: &mut ClientState<String, String>,
+    local_state: &mut RedisState<Arc<str>, RedisValue>,
+    client_state: &mut ClientState<Arc<str>, Arc<str>>,
     replicas_state: &mut ReplicasState,
-    client_addr: String,
-    commands: &Vec<String>
+    client_addr: &Arc<str>,
+    commands: &Vec<Arc<str>>
 ) -> String{
     let response = match commands[0].to_uppercase().as_str() {
         "PING" => format!("+PONG\r\n"),
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
             if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
-                encode_resp_array_str(&vec!["REPLCONF", "ACK", &client_state.num_bytes_synced().to_string()])
+                encode_resp_array_str(&vec!["REPLCONF", "ACK", &client_state.num_bytes_synced().to_string()]) // can use itoa for string alloc
             } else {
                 format!("+OK\r\n")
             }
@@ -35,7 +35,7 @@ pub async fn execute_commands(
             {
                 let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
                 let (sender, receiver) = mpsc::channel(1);
-                replicas_senders_guard.entry(client_addr.to_owned()).insert_entry(sender);
+                replicas_senders_guard.entry(client_addr.clone()).insert_entry(sender);
                 client_state.set_replica(true);
                 client_state.set_replica_receiver(receiver);
             }
@@ -96,7 +96,7 @@ pub async fn execute_commands(
     );
 
     if local_state.server_state().replication_mode() && is_write_command && write_to_stream {
-        let encoded = Arc::new(encode_resp_array(commands));
+        let encoded: Arc<str> = Arc::from(encode_resp_array_arc(commands));
         replicas_state.increment_master_write_offset(encoded.len());
         let senders = {
             let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();

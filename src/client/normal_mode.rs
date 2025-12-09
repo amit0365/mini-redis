@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::parse_resp;
@@ -6,10 +8,10 @@ use crate::commands::execute_commands;
 pub async fn handle_normal_mode(
     stream: &mut TcpStream,
     buf: &mut [u8; 512],
-    client_state: &mut ClientState<String, String>,
-    local_state: &mut RedisState<String, RedisValue>,
+    client_state: &mut ClientState<Arc<str>, Arc<str>>,
+    local_state: &mut RedisState<Arc<str>, RedisValue>,
     local_replicas_state: &mut ReplicasState,
-    addr: String,
+    addr: &Arc<str>,
 ) -> bool {
     match stream.read(buf).await {
         Ok(0) => false,
@@ -31,13 +33,13 @@ pub async fn handle_normal_mode(
 
 async fn handle_multi_mode(
     stream: &mut TcpStream,
-    client_state: &mut ClientState<String, String>,
-    local_state: &mut RedisState<String, RedisValue>,
+    client_state: &mut ClientState<Arc<str>, Arc<str>>,
+    local_state: &mut RedisState<Arc<str>, RedisValue>,
     local_replicas_state: &mut ReplicasState,
-    addr: String,
-    commands: Vec<String>,
+    addr: &Arc<str>,
+    commands: Vec<Arc<str>>,
 ) {
-    match commands[0].as_str() {
+    match commands[0].as_ref() {
         "EXEC" => {
             let mut responses = Vec::new();
             match client_state.commands_len() {
@@ -50,7 +52,7 @@ async fn handle_multi_mode(
                             local_state,
                             client_state,
                             local_replicas_state,
-                            addr.clone(),
+                            addr,
                             &queued_command
                         ).await;
                         responses.push(response);
@@ -77,13 +79,13 @@ async fn handle_multi_mode(
 
 async fn handle_non_multi_mode(
     stream: &mut TcpStream,
-    client_state: &mut ClientState<String, String>,
-    local_state: &mut RedisState<String, RedisValue>,
+    client_state: &mut ClientState<Arc<str>, Arc<str>>,
+    local_state: &mut RedisState<Arc<str>, RedisValue>,
     local_replicas_state: &mut ReplicasState,
-    addr: String,
-    commands: Vec<String>,
+    addr: &Arc<str>,
+    commands: Vec<Arc<str>>,
 ) {
-    match commands[0].as_str() {
+    match commands[0].as_ref() {
         "EXEC" => stream.write_all(b"-ERR EXEC without MULTI\r\n").await.unwrap(),
         "DISCARD" => stream.write_all(b"-ERR DISCARD without MULTI\r\n").await.unwrap(),
 
