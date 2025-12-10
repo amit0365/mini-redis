@@ -9,7 +9,6 @@ pub enum RedisValue{
     Number(u64),
     StringWithTimeout((Arc<str>, Instant)),
     Stream(StreamValue<Arc<str>, Arc<str>>),
-    Commands(Vec<Arc<str>>),
 }
 
 #[derive(Clone)]
@@ -59,7 +58,6 @@ impl fmt::Display for RedisValue {
             RedisValue::Number(n) => write!(f, "{}", n),
             RedisValue::StringWithTimeout((s, _)) => write!(f, "{}", s),
             RedisValue::Stream(_) => write!(f, "stream"),
-            RedisValue::Commands(_) => write!(f, "commands"),
         }
     }
 }
@@ -70,7 +68,6 @@ pub fn redis_value_as_string(val: RedisValue) -> Option<Arc<str>> {
         RedisValue::StringWithTimeout((s, _)) => Some(s),
         RedisValue::Stream(_) => None,
         RedisValue::Number(_) => None,
-        RedisValue::Commands(_) => None,
     }
 }
 
@@ -81,7 +78,6 @@ impl RedisValue{
             RedisValue::StringWithTimeout((s, _)) => Some(s),
             RedisValue::Stream(_) => None,
             RedisValue::Number(_) => None,
-            RedisValue::Commands(_) => None,
         }
     }
 
@@ -95,15 +91,14 @@ impl RedisValue{
                 let pairs_flattened = pairs.iter().flat_map(|(k, v)| [k.as_ref(), v.as_ref()]).collect::<Vec<&str>>();
                 Some(vec![json!([id.as_ref(), pairs_flattened])])
             },
-            RedisValue::Commands(_) => None,
         }
     }
 
-    pub fn get_stream_range(&self, start_id: &str, stop_id: Option<&str>) -> Vec<Value>{
+    pub fn get_stream_range(&self, start_id: &str, stop_id: Option<&str>) -> RedisResult<Vec<Value>>{
         match self{
-            RedisValue::String(_) => Vec::new(), // fix error handling,
-            RedisValue::Number(_) => Vec::new(), // fix error handling,
-            RedisValue::StringWithTimeout((_, _)) => Vec::new(), // fix error handling,
+            RedisValue::String(_) => Ok(Vec::new()), // fix error handling,
+            RedisValue::Number(_) => Ok(Vec::new()), // fix error handling,
+            RedisValue::StringWithTimeout((_, _)) => Ok(Vec::new()), // fix error handling,
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
@@ -120,11 +115,11 @@ impl RedisValue{
                                 _ => {
                                     match stop_id.split_once("-"){
                                         Some((stop_id_pre, stop_id_post)) => {
-                                            stop_time = Some(stop_id_pre.parse::<u128>().unwrap());
-                                            stop_seq = Some(stop_id_post.parse::<u64>().unwrap());
+                                            stop_time = Some(stop_id_pre.parse::<u128>()?);
+                                            stop_seq = Some(stop_id_post.parse::<u64>()?);
                                         },
 
-                                        None => return Vec::new() // fix error handling,
+                                        None => return Err(RedisError::InvalidStreamId("Invalid stop ID format".to_string()))
                                     } 
                                 },
                             }
@@ -142,15 +137,15 @@ impl RedisValue{
                         start_time = 0;
                         start_seq = 0;
                     } else {
-                        start_time = start_id_pre.parse::<u128>().unwrap();
-                        start_seq = start_id_post.parse::<u64>().unwrap();
+                        start_time = start_id_pre.parse::<u128>()?;
+                        start_seq = start_id_post.parse::<u64>()?;
                     }
 
                     stream.map.iter().for_each(|e| {
                         let (time, seq, pairs) = e.1;
 
-                        let result = if stop_time.is_some() && stop_seq.is_some() && stop_id.is_some(){
-                            *time >= start_time && *time <= stop_time.unwrap() && *seq >= start_seq && *seq <= stop_seq.unwrap()
+                        let result = if let (Some(st), Some(ss)) = (stop_time, stop_seq) {
+                            *time >= start_time && *time <= st && *seq >= start_seq && *seq <= ss
                         } else if stop_time.is_none() && stop_seq.is_none() && stop_id.is_some(){
                             *time >= start_time && *seq >= start_seq
                         } else { // xread
@@ -164,16 +159,15 @@ impl RedisValue{
                     });
                 }
 
-                entries
+                Ok(entries)
             },
-            RedisValue::Commands(_) => Vec::new(),
         }
     }
 
     pub fn update_stream(&mut self, id: &Arc<str>, pairs: Arc<Vec<(Arc<str>, Arc<str>)>>) -> RedisResult<String>{
         match self{
             RedisValue::String(_) | RedisValue::Number(_) |
-            RedisValue::StringWithTimeout(_) | RedisValue::Commands(_) => {
+            RedisValue::StringWithTimeout(_) => {
                 Err(RedisError::WrongType("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()))
             },
             RedisValue::Stream(stream) => {

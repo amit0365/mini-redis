@@ -4,7 +4,6 @@ mod normal_mode;
 
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use tokio::net::TcpStream;
-use std::net::SocketAddr;
 use crate::{error::RedisResult, protocol::{ClientState, RedisState, RedisValue, ReplicasState}};
 
 pub use subscribe_mode::handle_subscribe_mode;

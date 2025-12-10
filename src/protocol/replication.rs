@@ -155,11 +155,32 @@ pub async fn initialize_replica_connection(
     state: RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
 ) -> tokio::task::JoinHandle<()> {
-    let master_contact = config.master_contact_for_slave.as_ref().unwrap();
+    let master_contact = match config.master_contact_for_slave.as_ref() {
+        Some(contact) => contact.clone(),
+        None => {
+            eprintln!("Error: master_contact_for_slave is not set");
+            return tokio::spawn(async move {});
+        }
+    };
     let port = Arc::clone(&config.port);
 
-    let (master_ip, master_port) = master_contact.split_once(" ").unwrap();
-    let mut master_stream = TcpStream::connect(format!("{}:{}", master_ip, master_port)).await.unwrap();
+    let (master_ip, master_port) = match master_contact.split_once(" ") {
+        Some((ip, port)) => (ip, port),
+        None => {
+            eprintln!("Error: Invalid master contact format, expected 'IP PORT'");
+            return tokio::spawn(async move {});
+        }
+    };
+    
+    let master_stream = match TcpStream::connect(format!("{}:{}", master_ip, master_port)).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            eprintln!("Error: Failed to connect to master at {}:{}: {}", master_ip, master_port, e);
+            return tokio::spawn(async move {});
+        }
+    };
+    
+    let mut master_stream = master_stream;
 
     tokio::spawn(async move {
         let mut handshake_complete = false;

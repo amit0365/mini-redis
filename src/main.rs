@@ -16,7 +16,9 @@ async fn main() {
     let args = env::args().collect::<Vec<_>>();
     let config = ServerConfig::parse_from_args(args);
 
-    let listener = Arc::new(TcpListener::bind(format!("127.0.0.1:{}", config.port)).await.unwrap());
+    let listener = Arc::new(TcpListener::bind(format!("127.0.0.1:{}", config.port))
+        .await
+        .expect("Failed to bind to port"));
     let connection_count = Arc::new(AtomicUsize::new(0));
     let mut state = RedisState::new();
     let replicas_state = ReplicasState::new();
@@ -24,7 +26,13 @@ async fn main() {
     replication::configure_server_role(&config, &mut state, replicas_state.clone()).await;
 
     loop {
-        let (stream, addr) = listener.accept().await.unwrap();
+        let (stream, addr) = match listener.accept().await {
+            Ok((s, a)) => (s, a),
+            Err(e) => {
+                eprintln!("Error accepting connection: {}", e);
+                continue;
+            }
+        };
         println!("accepted new connection");
 
         if !client::can_accept_connection(&connection_count, 10000) {

@@ -26,16 +26,18 @@ pub async fn execute_commands(
             }
         },
         "PSYNC" => {
-            let full_sync_response = local_state.psync();
+            let full_sync_response = local_state.psync()?;
             if write_to_stream {
-                stream.write_all(full_sync_response.as_bytes()).await.unwrap();
-                let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE).unwrap();
+                stream.write_all(full_sync_response.as_bytes()).await?;
+                let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE)
+                    .map_err(|e| crate::error::RedisError::Other(format!("Failed to decode RDB: {}", e)))?;
                 let rdb_message = [format!("${}\r\n", rdb_bytes.len()).into_bytes(), rdb_bytes].concat();
-                stream.write_all(&rdb_message).await.unwrap();
+                stream.write_all(&rdb_message).await?;
             }
 
             {
-                let mut replicas_senders_guard = replicas_state.replica_senders().lock().unwrap();
+                let mut replicas_senders_guard = replicas_state.replica_senders().lock()
+                    .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
                 let (sender, receiver) = mpsc::channel(1);
                 replicas_senders_guard.entry(Arc::clone(client_addr)).insert_entry(sender);
                 client_state.set_replica(true);
@@ -47,10 +49,11 @@ pub async fn execute_commands(
             format!("") // send empty string since we don't write to stream
         }
         "WAIT" => {   
-            let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
-            let master_write_offset = replicas_state.get_master_write_offset();
-            let replicas_write_offset = replicas_state.get_replica_offsets();
-            for (id, _sender) in replica_senders_guard.iter(){
+            let replica_senders_guard = replicas_state.replica_senders().lock()
+                .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
+            let _master_write_offset = replicas_state.get_master_write_offset();
+            let _replicas_write_offset = replicas_state.get_replica_offsets();
+            for (_id, _sender) in replica_senders_guard.iter(){
                 //let replica_offset = replicas_write_offset.get(id).unwrap();
                 //if *replica_offset < master_write_offset{
                     //send getack
@@ -89,7 +92,7 @@ pub async fn execute_commands(
     };
 
     if write_to_stream && commands[0].to_uppercase().as_str() != "PSYNC" {
-        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(response.as_bytes()).await?;
     }
 
     let is_write_command = matches!(
@@ -101,12 +104,14 @@ pub async fn execute_commands(
         let encoded: Arc<str> = Arc::from(encode_resp_array_arc(commands));
         replicas_state.increment_master_write_offset(encoded.len());
         let senders = {
-            let replica_senders_guard = replicas_state.replica_senders().lock().unwrap();
+            let replica_senders_guard = replicas_state.replica_senders().lock()
+                .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
             replica_senders_guard.values().cloned().collect::<Vec<_>>()
         };
 
         for sender in senders{
-            sender.send(Arc::clone(&encoded)).await.unwrap();
+            sender.send(Arc::clone(&encoded)).await
+                .map_err(|e| crate::error::RedisError::Other(format!("Failed to send to replica: {}", e)))?;
         };
     }
 

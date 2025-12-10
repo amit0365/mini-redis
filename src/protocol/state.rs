@@ -17,24 +17,12 @@ impl<K, RedisValue> RedisState<K, RedisValue> {
         &self.channels_state
     }
 
-    pub fn channels_state_mut(&mut self) -> &mut ChannelState<K> {
-        &mut self.channels_state
-    }
-
     pub fn map_state(&self) -> &MapState<K, RedisValue> {
         &self.map_state
     }
 
-    pub fn map_state_mut(&mut self) -> &mut MapState<K, RedisValue> {
-        &mut self.map_state
-    }
-
     pub fn list_state(&self) -> &ListState<K, RedisValue> {
         &self.list_state
-    }
-
-    pub fn list_state_mut(&mut self) -> &mut ListState<K, RedisValue> {
-        &mut self.list_state
     }
 
     pub fn server_state(&self) -> &ServerState<K, RedisValue> {
@@ -58,14 +46,6 @@ impl<K> ChannelState<K>{
         let subscribers = Arc::new(Mutex::new(HashMap::new()));
         ChannelState { channels_map, subscribers }
     }
-
-    pub fn channels_map(&self) -> &Arc<RwLock<HashMap<K, (usize, HashSet<Arc<str>>)>>> {
-        &self.channels_map
-    }
-
-    pub fn subscribers(&self) -> &Arc<Mutex<HashMap<K, Vec<Sender<(Arc<str>, Arc<Vec<Arc<str>>>)>>>>> {
-        &self.subscribers
-    }
 }
 
 #[derive(Clone)]
@@ -76,11 +56,11 @@ pub struct ServerState<K, V>{
 
 impl<K, V> ServerState<K, V> {
     pub fn replication_mode(&self) -> bool {
-        *self.replication_mode.lock().unwrap()
+        *self.replication_mode.lock().expect("replication_mode mutex poisoned")
     }
 
     pub fn set_replication_mode(&mut self, mode: bool) {
-        *self.replication_mode.lock().unwrap() = mode;
+        *self.replication_mode.lock().expect("replication_mode mutex poisoned") = mode;
     }
 
     pub fn map(&self) -> &HashMap<K, V> {
@@ -111,11 +91,11 @@ impl ReplicasState {
     }
 
     pub fn increment_master_write_offset(&mut self, n: usize){
-       *self.master_write_offset.write().unwrap() += n;
+       *self.master_write_offset.write().expect("master_write_offset lock poisoned") += n;
     }
 
     pub fn num_connected_replicas(&self) -> usize {
-        *self.num_connected_replicas.read().unwrap()
+        *self.num_connected_replicas.read().expect("num_connected_replicas lock poisoned")
     }
 
     pub fn get_replica_offsets(&self) -> &HashMap<Arc<str>, usize> {
@@ -123,11 +103,11 @@ impl ReplicasState {
     }
 
     pub fn get_master_write_offset(&self) -> usize {
-        *self.master_write_offset.read().unwrap()
+        *self.master_write_offset.read().expect("master_write_offset lock poisoned")
     }
 
     pub fn increment_num_connected_replicas(&mut self){
-       *self.num_connected_replicas.write().unwrap() += 1;
+       *self.num_connected_replicas.write().expect("num_connected_replicas lock poisoned") += 1;
     }
 
     pub fn replica_senders(&self) -> &Arc<Mutex<HashMap<Arc<str>, Sender<Arc<str>>>>> {
@@ -223,10 +203,6 @@ impl<K, V> ReplicationState<K, V> {
         }
     }
 
-    pub fn get_address(&self) -> &Arc<str> {
-        &self.addr
-    }
-
     pub fn set_address(&mut self, addr: &Arc<str>){
         self.addr = Arc::clone(addr);
     }
@@ -279,14 +255,6 @@ impl<K, V> QueuedState<K, V> {
         self.multi_queue_mode = mode;
     }
 
-    pub fn get_queued_commands(&self) -> &VecDeque<Vec<V>> {
-        &self.queued_commands
-    }
-
-    pub fn get_queued_commands_mut(&mut self) -> &mut VecDeque<Vec<V>> {
-        &mut self.queued_commands
-    }
-
     pub fn push_command(&mut self, command: Vec<V>) {
         self.queued_commands.push_back(command);
     }
@@ -311,10 +279,6 @@ impl ClientState<Arc<str>, Arc<str>>{
             subscription_state: SubscriptionState::new(),
             replication_state: ReplicationState::new(),
         }
-    }
-
-    pub fn get_address_replica(&self) -> &Arc<str> {
-        &self.replication_state.get_address()
     }
 
     pub fn set_address_replica(&mut self, addr: &Arc<str>){
@@ -367,14 +331,6 @@ impl ClientState<Arc<str>, Arc<str>>{
         self.queued_state.set_multi_queue_mode(mode);
     }
 
-    pub fn get_queued_commands(&self) -> &VecDeque<Vec<Arc<str>>> {
-        self.queued_state.get_queued_commands()
-    }
-
-    pub fn get_queued_commands_mut(&mut self) -> &mut VecDeque<Vec<Arc<str>>> {
-        self.queued_state.get_queued_commands_mut()
-    }
-
     pub fn push_command(&mut self, command: Vec<Arc<str>>) {
         self.queued_state.push_command(command);
     }
@@ -425,14 +381,6 @@ impl<K> ListState<K, RedisValue>{
         let waiters = Arc::new(Mutex::new(HashMap::new()));
         ListState { list, waiters }
     }
-
-    pub fn list(&self) -> &Arc<Mutex<HashMap<K, VecDeque<RedisValue>>>> {
-        &self.list
-    }
-
-    pub fn waiters(&self) -> &Arc<Mutex<HashMap<K, VecDeque<Sender<(Arc<str>, RedisValue)>>>>> {
-        &self.waiters
-    }
 }
 
 #[derive(Clone)]
@@ -447,14 +395,6 @@ impl<K> MapState<K, RedisValue>{
         let waiters = Arc::new(Mutex::new(HashMap::new()));
         MapState { map, waiters }
     }
-
-    pub fn map(&self) -> &Arc<RwLock<HashMap<K, RedisValue>>> {
-        &self.map
-    }
-
-    pub fn waiters(&self) -> &Arc<Mutex<HashMap<K, VecDeque<Sender<(Arc<str>, RedisValue)>>>>> {
-        &self.waiters
-    }
 }
 
 impl RedisState<Arc<str>, RedisValue>{
@@ -466,11 +406,13 @@ impl RedisState<Arc<str>, RedisValue>{
         RedisState { channels_state, map_state, list_state, server_state }
     }
 
-    pub fn psync(&self) -> String {
-        let repl_id = self.server_state().map().get("master_replid").unwrap();
-        let offset = self.server_state().map().get("master_repl_offset").unwrap();
+    pub fn psync(&self) -> RedisResult<String> {
+        let repl_id = self.server_state().map().get("master_replid")
+            .ok_or_else(|| RedisError::KeyNotFound("master_replid not found".to_string()))?;
+        let offset = self.server_state().map().get("master_repl_offset")
+            .ok_or_else(|| RedisError::KeyNotFound("master_repl_offset not found".to_string()))?;
         let fullresync_response = format!("+FULLRESYNC {} {}\r\n", repl_id, offset);
-        fullresync_response
+        Ok(fullresync_response)
     }
 
     pub fn set(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
@@ -539,7 +481,10 @@ impl RedisState<Arc<str>, RedisValue>{
                 .entry(Arc::clone(key))
                 .or_insert(VecDeque::new())
                 .extend(items);
-            list_guard.get(key).unwrap().len().to_string()
+            list_guard.get(key)
+                .ok_or_else(|| RedisError::KeyNotFound(format!("Key {} not found", key)))?
+                .len()
+                .to_string()
         };
 
         let mut waiters_guard = self.list_state().waiters.lock()?;
@@ -576,7 +521,9 @@ impl RedisState<Arc<str>, RedisValue>{
             deque.push_front(item);
         }
 
-        let count = list_guard.get(key).unwrap().len();
+        let count = list_guard.get(key)
+            .ok_or_else(|| RedisError::KeyNotFound(format!("Key {} not found", key)))?
+            .len();
         Ok(format!(":{}\r\n", count.to_string()))
     } 
 
@@ -744,7 +691,6 @@ impl RedisState<Arc<str>, RedisValue>{
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
                     RedisValue::Number(_) => "number".to_string(),
-                    RedisValue::Commands(_) => "commands".to_string(),
                 }
             },
             None => "none".to_string()
@@ -797,7 +743,7 @@ impl RedisState<Arc<str>, RedisValue>{
         let map_guard = self.map_state().map.read()?;
         let stream_value = map_guard.get(&commands[1])
             .ok_or_else(|| RedisError::KeyNotFound(format!("Key {} not found", commands[1])))?;
-        let values = stream_value.get_stream_range(&commands[2], Some(&commands[3]));
+        let values = stream_value.get_stream_range(&commands[2], Some(&commands[3]))?;
         if !values.is_empty() {
             encode_resp_value_array(&mut encoded_array, &values);
             Ok(encoded_array)
@@ -822,7 +768,7 @@ impl RedisState<Arc<str>, RedisValue>{
                     let values = map_guard
                     .get(*key)
                     .ok_or_else(|| RedisError::KeyNotFound(format!("Key {} not found", key.as_ref())))?
-                    .get_stream_range(id, None);
+                    .get_stream_range(id, None)?;
                     if !values.is_empty() { key_entries.push(json!([key.as_ref(), values]));}
                 }
         
