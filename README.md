@@ -2,9 +2,18 @@
 
 A Redis-like server implementation written in Rust using async/await with Tokio. This project implements a subset of Redis's functionality, focusing on core commands, data structures, replication, and pub/sub. This project was built as part of the [Build your own Redis](https://app.codecrafters.io/courses/redis/overview).
 
+## Architecture
+
+- Built with **Tokio** for async I/O and runtime
+- Supports concurrent client connections (up to 10,000)
+- Implements master-replica replication with PSYNC and RDB snapshots
+- Pub/Sub messaging with channel-based communication
+- Transaction support with command queueing
+- Rate Limit to max 10,000 concurrent connections
+
 ## Features
 
-This implementation supports the following Redis commands:
+### Supported Commands
 
 - **String:** `SET`, `GET`, `INCR`
 - **List:** `LPUSH`, `RPUSH`, `LRANGE`, `LLEN`, `LPOP`, `BLPOP`
@@ -15,14 +24,79 @@ This implementation supports the following Redis commands:
 - **Server:** `INFO`, `TYPE`, `WAIT`
 - **Replication:** `REPLCONF`, `PSYNC` (master-replica replication)
 
-## Architecture
+### Core Stages
+- Bind to a port
+- Respond to PING
+- Respond to multiple PINGs
+- Handle concurrent clients
+- Implement the ECHO command
+- Implement the SET & GET commands
+- Expiry
 
-- Built with **Tokio** for async I/O and runtime
-- Supports concurrent client connections (up to 10,000)
-- Implements master-replica replication with PSYNC and RDB snapshots
-- Pub/Sub messaging with channel-based communication
-- Transaction support with command queueing
-- Rate Limit to max 10,000 concurrent connections
+### Lists
+- Create a list
+- Append an element (RPUSH)
+- Append multiple elements
+- List elements with positive indexes (LRANGE)
+- List elements with negative indexes
+- Prepend elements (LPUSH)
+- Query list length (LLEN)
+- Remove an element (LPOP)
+- Remove multiple elements
+- Blocking retrieval (BLPOP)
+- Blocking retrieval with timeout
+
+### Streams
+- The TYPE command
+- Create a stream (XADD)
+- Validating entry IDs
+- Partially auto-generated IDs
+- Fully auto-generated IDs
+- Query entries from stream (XRANGE)
+- Query with `-`
+- Query with `+`
+- Query single stream using XREAD
+- Query multiple streams using XREAD
+- Blocking reads
+- Blocking reads without timeout
+- Blocking reads using `$`
+
+### Transactions
+- The INCR command
+- The MULTI command
+- The EXEC command
+- Empty transaction
+- Queueing commands
+- Executing a transaction
+- The DISCARD command
+- Failures within transactions
+- Multiple transactions
+
+### Replication
+- Configure listening port
+- The INFO command
+- The INFO command on a replica
+- Initial replication ID and offset
+- Send handshake (REPLCONF, PSYNC)
+- Receive handshake
+- Empty RDB transfer
+- Single-replica propagation
+- Multi-replica propagation
+- Command processing
+- ACKs with no commands
+- ACKs with commands
+- WAIT with no replicas
+- WAIT with no commands
+- WAIT with multiple commands
+
+### Pub/Sub
+- Subscribe to a channel
+- Subscribe to multiple channels
+- Enter subscribed mode
+- PING in subscribed mode
+- Publish a message
+- Deliver messages
+- Unsubscribe
 
 ## Getting Started
 
