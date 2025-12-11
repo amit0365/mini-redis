@@ -437,7 +437,16 @@ pub struct SortedSetState<K>{
 
 #[derive(Clone)]
 pub struct SortedSet{
+    members: HashMap<Arc<str>, f64>,
     scores: BTreeSet<(OrderedFloat<f64>, Arc<str>)>,
+}
+
+impl SortedSet{
+    fn new() -> Self{
+        let members = HashMap::new();
+        let scores = BTreeSet::new();
+        SortedSet { members, scores }
+    }
 }
 
 impl<K> SortedSetState<K>{
@@ -919,14 +928,20 @@ impl RedisState<Arc<str>, RedisValue>{
     pub fn zadd(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = Arc::clone(&commands[1]);
         let mut sorted_state_guard = self.sorted_set_state.set.write()?;
-        let sorted_state = sorted_state_guard.entry(key).or_insert_with(|| SortedSet { scores: BTreeSet::new() });
+        let sorted_state = sorted_state_guard.entry(key).or_insert_with(|| SortedSet::new());
 
         let mut new_members = 0;
         let args = &commands[2..];
         for i in (0..args.len()).step_by(2){
             let score = args[i].parse::<f64>()?;
             sorted_state.scores.insert((OrderedFloat::from(score), Arc::clone(&args[i+1])));
-            new_members += 1;
+
+            if sorted_state.members.get(&args[i+1]).is_none(){
+                sorted_state.members.insert(Arc::clone(&args[i+1]), score);
+                new_members += 1;
+            } else {
+                sorted_state.members.entry(Arc::clone(&args[i+1])).and_modify(|prev_score| *prev_score = score);
+            }
         }
 
         Ok(format!(":{}\r\n", new_members))
