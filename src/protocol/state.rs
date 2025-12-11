@@ -1,4 +1,5 @@
-use std::{collections::{HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
@@ -9,6 +10,7 @@ pub struct RedisState<K, RedisValue> {
     channels_state: ChannelState<K>,
     map_state: MapState<K, RedisValue>,
     list_state: ListState<K, RedisValue>,
+    sorted_set_state: SortedSetState<K>,
     server_state: ServerState<K, RedisValue>
 }
 
@@ -428,13 +430,31 @@ impl<K> MapState<K, RedisValue>{
     }
 }
 
+#[derive(Clone)]
+pub struct SortedSetState<K>{
+    set: Arc<RwLock<HashMap<K, SortedSet>>>,
+}
+
+#[derive(Clone)]
+pub struct SortedSet{
+    scores: BTreeSet<(OrderedFloat<f64>, Arc<str>)>,
+}
+
+impl<K> SortedSetState<K>{
+    fn new() -> Self{
+        let set = Arc::new(RwLock::new(HashMap::new()));
+        SortedSetState { set }
+    }
+}
+
 impl RedisState<Arc<str>, RedisValue>{
     pub fn new() -> Self{
         let channels_state = ChannelState::new();
         let map_state = MapState::new();
         let list_state = ListState::new();
         let server_state = ServerState::new();
-        RedisState { channels_state, map_state, list_state, server_state }
+        let sorted_set_state = SortedSetState::new();
+        RedisState { channels_state, map_state, list_state, server_state, sorted_set_state }
     }
 
     pub fn psync(&self) -> RedisResult<String> {
@@ -894,6 +914,22 @@ impl RedisState<Arc<str>, RedisValue>{
             }
             _ => Err(RedisError::InvalidCommand(format!("INFO subcommand '{}' not supported", commands[1]))),
         }
+    } 
+
+    pub fn zadd(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let key = Arc::clone(&commands[1]);
+        let mut sorted_state_guard = self.sorted_set_state.set.write()?;
+        let sorted_state = sorted_state_guard.entry(key).or_insert_with(|| SortedSet { scores: BTreeSet::new() });
+
+        let mut new_members = 0;
+        let args = &commands[2..];
+        for i in (0..args.len()).step_by(2){
+            let score = args[i].parse::<f64>()?;
+            sorted_state.scores.insert((OrderedFloat::from(score), Arc::clone(&args[i+1])));
+            new_members += 1;
+        }
+
+        Ok(format!(":{}\r\n", new_members))
     } 
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
