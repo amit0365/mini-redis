@@ -86,4 +86,10 @@ impl<T> From<tokio::sync::mpsc::error::SendError<T>> for RedisError {
     }
 }
 
+impl<T> From<tokio::sync::mpsc::error::TrySendError<T>> for RedisError {
+    fn from(err: tokio::sync::mpsc::error::TrySendError<T>) -> Self {
+        RedisError::ChannelSend(err.to_string())
+    }
+}
+
 pub type RedisResult<T> = Result<T, RedisError>;

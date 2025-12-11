@@ -1,4 +1,5 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use core::num;
 use std::{str::from_utf8, sync::Arc};
 use crate::{error::RedisResult, protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::encode_resp_array_arc};
 use crate::utils::{encode_resp_array_str, parse_multiple_resp, parse_rdb_with_trailing_commands, ServerConfig};
@@ -6,6 +7,7 @@ use crate::commands::execute_commands;
 
 // Helper function to process commands after RDB file during handshake or after handshake complete
 pub async fn process_commands_from_master(
+    port: &Arc<str>,
     commands_data: &[u8],
     master_stream: &mut TcpStream,
     local_state: &mut RedisState<Arc<str>, RedisValue>,
@@ -13,20 +15,20 @@ pub async fn process_commands_from_master(
     local_replicas_state: &mut ReplicasState,
 ) -> RedisResult<()>{
     let all_commands = parse_multiple_resp(commands_data)?;
-    let master_literal = Arc::from("master");
     for commands in all_commands {
         let is_getack = commands.len() == 3
             && commands[0].to_uppercase() == "REPLCONF"
             && commands[1].to_uppercase() == "GETACK"
             && commands[2].to_string() == "*";
 
+        println!("replica port processing cmds from master {}", port);
         let response = execute_commands(
             master_stream,
             false,
             local_state,
             client_state,
             local_replicas_state,
-            &master_literal, // todo fix this properly
+            &port, 
             &commands
         ).await?;
 
@@ -86,6 +88,7 @@ pub async fn handle_handshake(
 
                 if rdb_end < buf.len() {
                     process_commands_from_master(
+                        &port,
                         &buf[rdb_end..],
                         master_stream,
                         local_state,
@@ -112,6 +115,7 @@ pub async fn handle_handshake(
     if let Ok(rdb_end) = parse_rdb_with_trailing_commands(buf, rdb_start) {
         if rdb_end < buf.len() {
             process_commands_from_master(
+                &port,
                 &buf[rdb_end..],
                 master_stream,
                 local_state,
@@ -126,12 +130,14 @@ pub async fn handle_handshake(
 
 pub async fn handle_replication_commands(
     buf: &[u8],
+    port: &Arc<str>,
     master_stream: &mut TcpStream,
     local_state: &mut RedisState<Arc<str>, RedisValue>,
     client_state: &mut ClientState<Arc<str>, Arc<str>>,
     local_replicas_state: &mut ReplicasState,
 ) -> RedisResult<()> {
     process_commands_from_master(
+        &port,
         buf,
         master_stream,
         local_state,
@@ -189,7 +195,9 @@ pub async fn initialize_replica_connection(
         let mut local_replicas_state = replicas_state;
         let mut client_state = ClientState::new();
         client_state.set_replica(true);
-        client_state.set_address_replica(&port); // is port good as identifier
+
+        let num_replica = local_replicas_state.num_connected_replicas();
+        client_state.set_id_replica(num_replica + 1); // is port good as identifier
         let mut replconf_ack_count = 0;
 
         let ping_msg = encode_resp_array_str(&["PING"]);
@@ -221,6 +229,7 @@ pub async fn initialize_replica_connection(
                     } else {
                         handle_replication_commands(
                             &buf[..n],
+                            &port,
                             &mut master_stream,
                             &mut local_state,
                             &mut client_state,

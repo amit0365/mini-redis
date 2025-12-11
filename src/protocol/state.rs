@@ -75,18 +75,23 @@ impl<K, V> ServerState<K, V> {
 #[derive(Clone)]
 pub struct ReplicasState{
     num_connected_replicas: Arc<RwLock<usize>>,
-    replica_offsets: HashMap<Arc<str>, usize>,
+    replica_offsets: HashMap<usize, usize>,
     master_write_offset: Arc<RwLock<usize>>,
-    replica_senders: Arc<Mutex<HashMap<Arc<str>, Sender<Arc<str>>>>>
+    replica_senders: Arc<Mutex<HashMap<usize, Sender<Arc<str>>>>>,
+    ack_tx: mpsc::Sender<usize>,
+    ack_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<usize>>>,
 }
 
 impl ReplicasState {
     pub fn new() -> Self {
+        let (ack_tx, ack_rx) = mpsc::channel(1);
         ReplicasState {
             num_connected_replicas: Arc::new(RwLock::new(0)),
             replica_offsets: HashMap::new(),
             master_write_offset: Arc::new(RwLock::new(0)),
-            replica_senders: Arc::new(Mutex::new(HashMap::new()))
+            replica_senders: Arc::new(Mutex::new(HashMap::new())),
+            ack_tx,
+            ack_rx: Arc::new(tokio::sync::Mutex::new(ack_rx))
         }
     }
 
@@ -94,11 +99,11 @@ impl ReplicasState {
        *self.master_write_offset.write().expect("master_write_offset lock poisoned") += n;
     }
 
-    pub fn num_connected_replicas(&self) -> usize {
-        *self.num_connected_replicas.read().expect("num_connected_replicas lock poisoned")
+    pub fn update_replica_offsets(&mut self, id: usize, add_count: usize){
+        self.replica_offsets.entry(id).and_modify(|v| *v += add_count);
     }
 
-    pub fn get_replica_offsets(&self) -> &HashMap<Arc<str>, usize> {
+    pub fn get_replica_offsets(&self) -> &HashMap<usize, usize> {
         &self.replica_offsets
     }
 
@@ -106,12 +111,24 @@ impl ReplicasState {
         *self.master_write_offset.read().expect("master_write_offset lock poisoned")
     }
 
+    pub fn num_connected_replicas(&self) -> usize {
+        *self.num_connected_replicas.read().expect("num_connected_replicas lock poisoned")
+    }
+
     pub fn increment_num_connected_replicas(&mut self){
        *self.num_connected_replicas.write().expect("num_connected_replicas lock poisoned") += 1;
     }
 
-    pub fn replica_senders(&self) -> &Arc<Mutex<HashMap<Arc<str>, Sender<Arc<str>>>>> {
+    pub fn replica_senders(&self) -> &Arc<Mutex<HashMap<usize, Sender<Arc<str>>>>> {
         &self.replica_senders
+    }
+
+    pub fn ack_tx(&self) -> &mpsc::Sender<usize> {
+        &self.ack_tx
+    }
+
+    pub fn ack_rx(&self) -> &Arc<tokio::sync::Mutex<mpsc::Receiver<usize>>> {
+        &self.ack_rx
     }
 }
 
@@ -185,7 +202,7 @@ impl<K, V> SubscriptionState<K, V> {
 }
 
 pub struct ReplicationState<K, V>{
-    addr: Arc<str>,
+    id: usize,
     is_replica: bool,
     num_bytes_synced: usize,
     receiver: Option<Receiver<V>>,
@@ -195,7 +212,7 @@ pub struct ReplicationState<K, V>{
 impl<K, V> ReplicationState<K, V> {
     fn new() -> Self {
         ReplicationState {
-            addr: Arc::from(""),
+            id: 0,
             is_replica: false,
             num_bytes_synced: 0,
             receiver: None,
@@ -203,8 +220,12 @@ impl<K, V> ReplicationState<K, V> {
         }
     }
 
-    pub fn set_address(&mut self, addr: &Arc<str>){
-        self.addr = Arc::clone(addr);
+    pub fn set_id(&mut self, id: usize){
+        self.id = id;
+    }
+
+    pub fn get_id(&self) -> usize{
+        self.id
     }
 
     pub fn is_replica(&self) -> bool {
@@ -281,8 +302,12 @@ impl ClientState<Arc<str>, Arc<str>>{
         }
     }
 
-    pub fn set_address_replica(&mut self, addr: &Arc<str>){
-        self.replication_state.set_address(addr);
+    pub fn set_id_replica(&mut self, id: usize){
+        self.replication_state.set_id(id);
+    }
+
+    pub fn get_address_replica(&self) -> usize {
+        self.replication_state.get_id()
     }
 
     // Delegation methods for SubscriptionState

@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
 use crate::error::RedisResult;
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
-use crate::utils::{EMPTY_RDB_FILE, encode_resp_array_arc, encode_resp_array_str};
+use crate::utils::{EMPTY_RDB_FILE, encode_resp_array_arc, encode_resp_array_str, encode_resp_array_str_to_arc};
 
 pub async fn execute_commands(
     stream: &mut TcpStream,
@@ -18,15 +19,25 @@ pub async fn execute_commands(
         "PING" => format!("+PONG\r\n"),
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
-            if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ //send update to master
-                let offset_str = client_state.num_bytes_synced().to_string();
-                encode_resp_array_str(&["REPLCONF", "ACK", &offset_str]) // can use itoa for string alloc
+            if commands[1].to_uppercase() == "ACK"{
+                //master received update from replica
+                let offset = commands[2].parse::<usize>()?;
+                println!("offset received {}", offset);
+                replicas_state.ack_tx().try_send(offset)?;
+                format!("") //no response required
+            } else if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ 
+                //send update to master
+                let num_bytes_synced = client_state.num_bytes_synced();
+                let replica_id = client_state.get_address_replica();
+                //replicas_state.update_replica_offsets(num_connected_replicas + 1, num_bytes_synced);
+                encode_resp_array_str(&["REPLCONF", "ACK", &num_bytes_synced.to_string()]) // can use itoa for string alloc
             } else {
                 format!("+OK\r\n")
             }
         },
         "PSYNC" => {
             let full_sync_response = local_state.psync()?;
+            let num_connected_replicas = replicas_state.num_connected_replicas();
             if write_to_stream {
                 stream.write_all(full_sync_response.as_bytes()).await?;
                 let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE)
@@ -39,7 +50,9 @@ pub async fn execute_commands(
                 let mut replicas_senders_guard = replicas_state.replica_senders().lock()
                     .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
                 let (sender, receiver) = mpsc::channel(1);
-                replicas_senders_guard.entry(Arc::clone(client_addr)).insert_entry(sender);
+                let key = num_connected_replicas + 1;
+                replicas_senders_guard.entry(key).insert_entry(sender);
+                
                 client_state.set_replica(true);
                 client_state.set_replica_receiver(receiver);
             }
@@ -48,24 +61,55 @@ pub async fn execute_commands(
             local_state.server_state_mut().set_replication_mode(true);
             format!("") // send empty string since we don't write to stream
         }
-        "WAIT" => {   
-            let replica_senders_guard = replicas_state.replica_senders().lock()
-                .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
-            let _master_write_offset = replicas_state.get_master_write_offset();
-            let _replicas_write_offset = replicas_state.get_replica_offsets();
-            for (_id, _sender) in replica_senders_guard.iter(){
-                //let replica_offset = replicas_write_offset.get(id).unwrap();
-                //if *replica_offset < master_write_offset{
-                    //send getack
-                    //receive repsonse
-                    //update replica offset
-                    //if anyone is fully synced decrement count for the required number of replicas
-                //} else {
-                    //increment count as replica already synced
-                //}
-            }   
+        "WAIT" => {
+            let num_required_synced_replicas = commands[1].parse::<usize>()
+                .map_err(|_| crate::error::RedisError::Other("Invalid number of replicas".to_string()))?;
+            println!("num_required_synced_replicas {}", num_required_synced_replicas);
+            let timeout_ms = commands[2].parse::<u64>()
+                .map_err(|_| crate::error::RedisError::Other("Invalid timeout value".to_string()))?;
+            
+            let replicas_write_offset= replicas_state.get_replica_offsets();
+            let master_write_offset = replicas_state.get_master_write_offset();
+            let get_ack_request = encode_resp_array_str_to_arc(&["REPLCONF", "GETACK", "*"]);
+            println!("master_write_offset {}", master_write_offset);
 
-            format!(":{}\r\n", replicas_state.num_connected_replicas())
+            let senders = {
+                let replica_senders_guard = replicas_state.replica_senders().lock()
+                    .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
+                    replica_senders_guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>()
+            };
+
+            //todo dont send getack to all only if they are pending check
+            for (id, sender) in senders{
+                let replica_offset = replicas_write_offset.get(&id).ok_or(crate::error::RedisError::KeyNotFound(format!("Replica offset not found for {}", id)))?;
+                if *replica_offset < master_write_offset{
+                    sender.send(get_ack_request.clone()).await.unwrap();
+                }
+            }
+
+            let ack_rx = replicas_state.ack_rx().clone();
+            let num_synced_replicas = tokio::time::timeout(
+                Duration::from_millis(timeout_ms), async move{
+                    let mut count = 0;
+                    let mut receiver_guard = ack_rx.lock().await;
+                    while count < num_required_synced_replicas {
+                        match receiver_guard.recv().await{
+                            Some(n) => {
+                                println!("n {}", n);
+                                if n >= master_write_offset {
+                                    count += 1;
+                                }
+                            },
+                            None => continue,
+                        }
+                    }
+                    
+                    println!("count {}", count);
+                    count               
+                }
+            ).await.unwrap_or(0);
+
+            format!(":{}\r\n", num_synced_replicas)
         },
         "SET" => local_state.set(&commands)?,
         "GET" => local_state.get(&commands)?,

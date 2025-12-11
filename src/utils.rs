@@ -75,7 +75,15 @@ pub fn encode_resp_array_str(array: &[&str]) -> String{
             encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
         }
         encoded_array
-    }
+}
+
+pub fn encode_resp_array_str_to_arc(array: &[&str]) -> Arc<str>{
+        let mut encoded_array = format!["*{}\r\n", array.len()];
+        for item in array {
+            encoded_array.push_str(&format!("${}\r\n{}\r\n", item.len(), item))
+        }
+        Arc::from(encoded_array)
+}
 
 pub fn encode_resp_array_arc_with_prefix(prefix: &[Arc<str>], arc_message: &Arc<Vec<Arc<str>>>) -> String {
         let total_len = prefix.len() + arc_message.len();
