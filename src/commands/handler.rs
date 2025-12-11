@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::mpsc};
 use base64::{Engine as _, engine::general_purpose};
-use crate::error::RedisResult;
+use crate::error::{RedisResult, RedisError};
 use crate::protocol::{ClientState, RedisState, RedisValue, ReplicasState};
 use crate::utils::{EMPTY_RDB_FILE, encode_resp_array_arc, encode_resp_array_str, encode_resp_array_str_to_arc};
 
@@ -21,15 +21,13 @@ pub async fn execute_commands(
         "REPLCONF" => {
             if commands[1].to_uppercase() == "ACK"{
                 //master received update from replica
-                let offset = commands[2].parse::<usize>()?;
-                println!("offset received {}", offset);
-                replicas_state.ack_tx().try_send(offset)?;
+                let replica_id = client_state.get_replica_id();
+                let replica_offset = commands[2].parse::<usize>()?;
+                replicas_state.ack_tx().try_send((replica_id, replica_offset))?;
                 format!("") //no response required
             } else if commands[1..3].join(" ") == "GETACK *" && client_state.is_replica(){ 
                 //send update to master
                 let num_bytes_synced = client_state.num_bytes_synced();
-                let replica_id = client_state.get_address_replica();
-                //replicas_state.update_replica_offsets(num_connected_replicas + 1, num_bytes_synced);
                 encode_resp_array_str(&["REPLCONF", "ACK", &num_bytes_synced.to_string()]) // can use itoa for string alloc
             } else {
                 format!("+OK\r\n")
@@ -41,20 +39,22 @@ pub async fn execute_commands(
             if write_to_stream {
                 stream.write_all(full_sync_response.as_bytes()).await?;
                 let rdb_bytes = general_purpose::STANDARD.decode(EMPTY_RDB_FILE)
-                    .map_err(|e| crate::error::RedisError::Other(format!("Failed to decode RDB: {}", e)))?;
+                    .map_err(|e| RedisError::Other(format!("Failed to decode RDB: {}", e)))?;
                 let rdb_message = [format!("${}\r\n", rdb_bytes.len()).into_bytes(), rdb_bytes].concat();
                 stream.write_all(&rdb_message).await?;
             }
 
             {
                 let mut replicas_senders_guard = replicas_state.replica_senders().lock()
-                    .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
+                    .map_err(|_| RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
                 let (sender, receiver) = mpsc::channel(1);
                 let key = num_connected_replicas + 1;
                 replicas_senders_guard.entry(key).insert_entry(sender);
-                
+
+                client_state.set_replica_id(key);
                 client_state.set_replica(true);
                 client_state.set_replica_receiver(receiver);
+                replicas_state.init_replica_offset(key);
             }
 
             replicas_state.increment_num_connected_replicas();
@@ -63,51 +63,61 @@ pub async fn execute_commands(
         }
         "WAIT" => {
             let num_required_synced_replicas = commands[1].parse::<usize>()
-                .map_err(|_| crate::error::RedisError::Other("Invalid number of replicas".to_string()))?;
-            println!("num_required_synced_replicas {}", num_required_synced_replicas);
+                .map_err(|_| RedisError::Other("Invalid number of replicas".to_string()))?;
             let timeout_ms = commands[2].parse::<u64>()
-                .map_err(|_| crate::error::RedisError::Other("Invalid timeout value".to_string()))?;
+                .map_err(|_| RedisError::Other("Invalid timeout value".to_string()))?;
             
-            let replicas_write_offset= replicas_state.get_replica_offsets();
             let master_write_offset = replicas_state.get_master_write_offset();
             let get_ack_request = encode_resp_array_str_to_arc(&["REPLCONF", "GETACK", "*"]);
-            println!("master_write_offset {}", master_write_offset);
 
             let senders = {
                 let replica_senders_guard = replicas_state.replica_senders().lock()
-                    .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
+                    .map_err(|_| RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
                     replica_senders_guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>()
             };
 
+            let mut num_synced_replicas = 0;
             //todo dont send getack to all only if they are pending check
-            for (id, sender) in senders{
-                let replica_offset = replicas_write_offset.get(&id).ok_or(crate::error::RedisError::KeyNotFound(format!("Replica offset not found for {}", id)))?;
-                if *replica_offset < master_write_offset{
+            for (id, sender) in &senders {
+                let replica_offset = replicas_state.get_replica_offset(*id)
+                    .ok_or_else(|| RedisError::KeyNotFound(format!("Replica offset not found for {}", id)))?;
+                if replica_offset < master_write_offset {
                     sender.send(get_ack_request.clone()).await.unwrap();
-                }
+                } else { num_synced_replicas += 1 }
             }
 
             let ack_rx = replicas_state.ack_rx().clone();
-            let num_synced_replicas = tokio::time::timeout(
-                Duration::from_millis(timeout_ms), async move{
-                    let mut count = 0;
+            let count = Arc::new(std::sync::Mutex::new(0usize));
+            let offsets = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let count_clone = count.clone();
+            let offsets_clone = offsets.clone();
+
+            let _ = tokio::time::timeout(
+                Duration::from_millis(timeout_ms), async move {
                     let mut receiver_guard = ack_rx.lock().await;
-                    while count < num_required_synced_replicas {
-                        match receiver_guard.recv().await{
-                            Some(n) => {
-                                println!("n {}", n);
-                                if n >= master_write_offset {
-                                    count += 1;
+                    loop {
+                        if *count_clone.lock().unwrap() >= num_required_synced_replicas {
+                            break;
+                        }
+                        match receiver_guard.recv().await {
+                            Some((replica_id, replica_offset)) => {
+                                if replica_offset >= master_write_offset {
+                                    *count_clone.lock().unwrap() += 1;
                                 }
+                                offsets_clone.lock().unwrap().push((replica_id, replica_offset));
                             },
                             None => continue,
                         }
                     }
-                    
-                    println!("count {}", count);
-                    count               
                 }
-            ).await.unwrap_or(0);
+            ).await;
+
+            num_synced_replicas += *count.lock().unwrap();
+            let received_offsets = std::mem::take(&mut *offsets.lock().unwrap());
+
+            for (replica_id, replica_offset) in received_offsets {
+                replicas_state.update_replica_offsets(replica_id, replica_offset);
+            }
 
             format!(":{}\r\n", num_synced_replicas)
         },
@@ -149,13 +159,13 @@ pub async fn execute_commands(
         replicas_state.increment_master_write_offset(encoded.len());
         let senders = {
             let replica_senders_guard = replicas_state.replica_senders().lock()
-                .map_err(|_| crate::error::RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
+                .map_err(|_| RedisError::Other("Failed to acquire replica senders lock".to_string()))?;
             replica_senders_guard.values().cloned().collect::<Vec<_>>()
         };
 
         for sender in senders{
             sender.send(Arc::clone(&encoded)).await
-                .map_err(|e| crate::error::RedisError::Other(format!("Failed to send to replica: {}", e)))?;
+                .map_err(|e| RedisError::Other(format!("Failed to send to replica: {}", e)))?;
         };
     }
 

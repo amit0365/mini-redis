@@ -75,11 +75,11 @@ impl<K, V> ServerState<K, V> {
 #[derive(Clone)]
 pub struct ReplicasState{
     num_connected_replicas: Arc<RwLock<usize>>,
-    replica_offsets: HashMap<usize, usize>,
+    replica_offsets: Arc<RwLock<HashMap<usize, usize>>>,
     master_write_offset: Arc<RwLock<usize>>,
     replica_senders: Arc<Mutex<HashMap<usize, Sender<Arc<str>>>>>,
-    ack_tx: mpsc::Sender<usize>,
-    ack_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<usize>>>,
+    ack_tx: mpsc::Sender<(usize, usize)>,
+    ack_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<(usize, usize)>>>,
 }
 
 impl ReplicasState {
@@ -87,7 +87,7 @@ impl ReplicasState {
         let (ack_tx, ack_rx) = mpsc::channel(1);
         ReplicasState {
             num_connected_replicas: Arc::new(RwLock::new(0)),
-            replica_offsets: HashMap::new(),
+            replica_offsets: Arc::new(RwLock::new(HashMap::new())),
             master_write_offset: Arc::new(RwLock::new(0)),
             replica_senders: Arc::new(Mutex::new(HashMap::new())),
             ack_tx,
@@ -99,12 +99,17 @@ impl ReplicasState {
        *self.master_write_offset.write().expect("master_write_offset lock poisoned") += n;
     }
 
-    pub fn update_replica_offsets(&mut self, id: usize, add_count: usize){
-        self.replica_offsets.entry(id).and_modify(|v| *v += add_count);
+    pub fn init_replica_offset(&self, id: usize) {
+        self.replica_offsets.write().expect("replica_offsets lock poisoned").insert(id, 0);
     }
 
-    pub fn get_replica_offsets(&self) -> &HashMap<usize, usize> {
-        &self.replica_offsets
+    pub fn update_replica_offsets(&mut self, id: usize, offset: usize){
+        self.replica_offsets.write().expect("replica_offsets lock poisoned")
+            .entry(id).and_modify(|v| *v = offset);
+    }
+
+    pub fn get_replica_offset(&self, id: usize) -> Option<usize> {
+        self.replica_offsets.read().expect("replica_offsets lock poisoned").get(&id).copied()
     }
 
     pub fn get_master_write_offset(&self) -> usize {
@@ -123,11 +128,11 @@ impl ReplicasState {
         &self.replica_senders
     }
 
-    pub fn ack_tx(&self) -> &mpsc::Sender<usize> {
+    pub fn ack_tx(&self) -> &mpsc::Sender<(usize, usize)> {
         &self.ack_tx
     }
 
-    pub fn ack_rx(&self) -> &Arc<tokio::sync::Mutex<mpsc::Receiver<usize>>> {
+    pub fn ack_rx(&self) -> &Arc<tokio::sync::Mutex<mpsc::Receiver<(usize, usize)>>> {
         &self.ack_rx
     }
 }
@@ -144,6 +149,7 @@ impl ServerState<Arc<str>, RedisValue>{
     }
 }
 
+//subscribe and preokicaiton state should be optional
 pub struct ClientState<K, V>{
     queued_state: QueuedState<K, V>,
     subscription_state: SubscriptionState<K, V>,
@@ -202,8 +208,8 @@ impl<K, V> SubscriptionState<K, V> {
 }
 
 pub struct ReplicationState<K, V>{
-    id: usize,
     is_replica: bool,
+    replica_id: usize,
     num_bytes_synced: usize,
     receiver: Option<Receiver<V>>,
     _phantom: PhantomData<(K, V)>
@@ -212,7 +218,7 @@ pub struct ReplicationState<K, V>{
 impl<K, V> ReplicationState<K, V> {
     fn new() -> Self {
         ReplicationState {
-            id: 0,
+            replica_id: 0,
             is_replica: false,
             num_bytes_synced: 0,
             receiver: None,
@@ -220,12 +226,12 @@ impl<K, V> ReplicationState<K, V> {
         }
     }
 
-    pub fn set_id(&mut self, id: usize){
-        self.id = id;
+    pub fn set_replica_id(&mut self, id: usize){
+        self.replica_id = id;
     }
 
-    pub fn get_id(&self) -> usize{
-        self.id
+    pub fn get_replica_id(&self) -> usize{
+        self.replica_id
     }
 
     pub fn is_replica(&self) -> bool {
@@ -302,12 +308,12 @@ impl ClientState<Arc<str>, Arc<str>>{
         }
     }
 
-    pub fn set_id_replica(&mut self, id: usize){
-        self.replication_state.set_id(id);
+    pub fn set_replica_id(&mut self, id: usize){
+        self.replication_state.set_replica_id(id);
     }
 
-    pub fn get_address_replica(&self) -> usize {
-        self.replication_state.get_id()
+    pub fn get_replica_id(&self) -> usize {
+        self.replication_state.get_replica_id()
     }
 
     // Delegation methods for SubscriptionState
@@ -926,7 +932,7 @@ impl RedisState<Arc<str>, RedisValue>{
         let channel_guard = self.channels_state().channels_map.read()?;
         let subs = channel_guard.get(&commands[1])
             .map(|(count, _)| *count)
-            .unwrap_or(0);
+            .unwrap_or(0); // todo cehck this
         let channel_name = &commands[1];
         let messages = Arc::new(commands.iter().skip(2).cloned().collect::<Vec<_>>());
         drop(channel_guard);

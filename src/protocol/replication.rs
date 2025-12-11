@@ -1,5 +1,4 @@
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
-use core::num;
 use std::{str::from_utf8, sync::Arc};
 use crate::{error::RedisResult, protocol::{ClientState, RedisState, RedisValue, ReplicasState}, utils::encode_resp_array_arc};
 use crate::utils::{encode_resp_array_str, parse_multiple_resp, parse_rdb_with_trailing_commands, ServerConfig};
@@ -21,7 +20,6 @@ pub async fn process_commands_from_master(
             && commands[1].to_uppercase() == "GETACK"
             && commands[2].to_string() == "*";
 
-        println!("replica port processing cmds from master {}", port);
         let response = execute_commands(
             master_stream,
             false,
@@ -36,7 +34,10 @@ pub async fn process_commands_from_master(
             master_stream.write_all(response.as_bytes()).await?;
         }
 
-        client_state.add_num_bytes_synced(encode_resp_array_arc(&commands).len()); //todo fix extra work reencoding again just for length
+        let num_bytes_processed = encode_resp_array_arc(&commands).len();
+        let replica_id = client_state.get_replica_id();
+        local_replicas_state.update_replica_offsets(replica_id, num_bytes_processed);
+        client_state.add_num_bytes_synced(num_bytes_processed); //todo fix extra work reencoding again just for length
     }
 
     Ok(())
@@ -194,10 +195,10 @@ pub async fn initialize_replica_connection(
         let mut local_state = state;
         let mut local_replicas_state = replicas_state;
         let mut client_state = ClientState::new();
-        client_state.set_replica(true);
+        client_state.set_replica(true); //replica marks itself 
 
         let num_replica = local_replicas_state.num_connected_replicas();
-        client_state.set_id_replica(num_replica + 1); // is port good as identifier
+        client_state.set_replica_id(num_replica + 1);
         let mut replconf_ack_count = 0;
 
         let ping_msg = encode_resp_array_str(&["PING"]);
@@ -256,7 +257,7 @@ pub async fn configure_server_role(
     state: &mut RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    if let Some(_) = config.master_contact_for_slave {
+    if let Some(_) = config.master_contact_for_slave { // when replica connects to the master
         state.server_state_mut().map_mut().insert(Arc::from("role"), RedisValue::String(Arc::from("slave")));
         Some(initialize_replica_connection(config, state.clone(), replicas_state).await)
     } else {

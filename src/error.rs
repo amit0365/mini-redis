@@ -92,4 +92,10 @@ impl<T> From<tokio::sync::mpsc::error::TrySendError<T>> for RedisError {
     }
 }
 
+impl From<tokio::time::error::Elapsed> for RedisError {
+    fn from(err: tokio::time::error::Elapsed) -> Self {
+        RedisError::Other(err.to_string())
+    }
+}
+
 pub type RedisResult<T> = Result<T, RedisError>;

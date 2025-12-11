@@ -181,7 +181,7 @@ impl RedisValue{
                         let id_sequence_num = stream.time_map
                             .get(&millis)
                             .map(|&seq| seq + 1)
-                            .unwrap_or(0);
+                            .unwrap_or(0); //todo check this
 
                         (millis, id_sequence_num)
                     },
