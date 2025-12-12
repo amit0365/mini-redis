@@ -229,8 +229,9 @@ cargo run -- --port 6379
 
 ### Testing
 
-The project uses CodeCrafters for testing. To run tests:
+To run tests install codecrafters cli:
 
 ```sh
-./your_program.sh
+curl https://codecrafters.io/install.sh | sh
+codecrafters test
 ```
