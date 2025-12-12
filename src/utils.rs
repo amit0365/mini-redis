@@ -279,7 +279,7 @@ pub struct Coordinates {
 
 impl Coordinates {
     pub fn as_value(&self) -> Value {
-        json!([self.latitude.to_string(), self.longitude.to_string()])
+        json!([ self.longitude.to_string(), self.latitude.to_string()])
     }
 }
 
