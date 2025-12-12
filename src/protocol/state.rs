@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
-use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, parse_wrapback}};
+use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -1041,7 +1041,8 @@ impl RedisState<Arc<str>, RedisValue>{
             Ok(format!("-ERR latitude is invlaid\r\n"))
         } else { 
             let sorted_state = sorted_state_guard.entry(Arc::clone(key)).or_insert_with(|| SortedSet::new());
-            sorted_state.members.insert(Arc::clone(&member), 0.0);
+            let score = encode_coordinates_to_score(latitude, longitude) as f64;
+            sorted_state.members.insert(Arc::clone(&member), score);
             sorted_state.scores.insert((OrderedFloat::from(0), Arc::clone(&member)));
 
             Ok(format!(":1\r\n"))
