@@ -1117,6 +1117,16 @@ impl RedisState<Arc<str>, RedisValue>{
 
     }
 
+    pub fn acl_whoami(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        match commands[1].to_uppercase().as_str() {
+            "WHOAMI" => {
+                let def = "default".to_string();
+                Ok(format!("${}\r\n{}\r\n", def.len(), def))
+            },
+            _ => Ok("$-1\r\n".to_string()),
+        }
+    }
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){

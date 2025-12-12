@@ -152,6 +152,7 @@ pub async fn execute_commands(
         "GEOPOS" => local_state.geopos(&commands)?,
         "GEODIST" => local_state.geodist(&commands)?,
         "GEOSEARCH" => local_state.geosearch(&commands)?,
+        "ACL" => local_state.acl_whoami(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 
