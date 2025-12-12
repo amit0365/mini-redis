@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::str::from_utf8;
 use std::sync::Arc;
 
@@ -277,9 +277,8 @@ pub struct Coordinates {
 }
 
 impl Coordinates {
-    pub fn as_resp_array(&self) -> String{
-        encode_resp_array_str(&[&self.latitude.to_string(), &self.longitude.to_string()])
-
+    pub fn as_value(&self) -> Value {
+        json!([self.latitude.to_string(), self.longitude.to_string()])
     }
 }
 

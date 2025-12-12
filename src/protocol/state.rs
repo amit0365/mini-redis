@@ -1050,17 +1050,24 @@ impl RedisState<Arc<str>, RedisValue>{
     }
 
     pub fn geopos(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
-        let (key, member) = (&commands[1], &commands[2]);
+        let (key, members) = (&commands[1], &commands[2..]);
         let sorted_state_guard = self.sorted_set_state.set.read()?;
         match sorted_state_guard.get(key){
             Some(sorted_state) => {
-                match sorted_state.members.get(member){
-                    Some(score) => {
-                        let coordinates = decode_score_to_coordinates(*score as u64);
-                        Ok(coordinates.as_resp_array())
-                    },
-                    None => Ok(format!("*1\r\n*-1\r\n")),
+                let mut coordinates_array= Vec::new();
+                for member in members {
+                    match sorted_state.members.get(member){
+                        Some(score) => {
+                            let coordinates = decode_score_to_coordinates(*score as u64);
+                            coordinates_array.push(coordinates.as_value());
+                        },
+                        None => coordinates_array.push(json!(["".to_string(), "".to_string()])),
+                    }
                 }
+
+                let mut resp_array = String::new(); 
+                encode_resp_value_array(&mut resp_array, &coordinates_array);
+                Ok(resp_array)
             },
             None => Ok(format!("*1\r\n*-1\r\n"))
         }
