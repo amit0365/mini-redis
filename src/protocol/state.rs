@@ -999,6 +999,23 @@ impl RedisState<Arc<str>, RedisValue>{
         }
     }
 
+    pub fn zscore(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let (key, member) = (&commands[1], &commands[2]);
+        let sorted_state_guard = self.sorted_set_state.set.read()?;
+        match sorted_state_guard.get(key){
+            Some(sorted_state) => {
+                match sorted_state.members.get(member){
+                    Some(score) => {
+                        let score_str = score.to_string();
+                        Ok(format!("${}\r\n{}\r\n", score_str.len(), score_str))
+                    },
+                    None => Ok(format!(":-1\r\n")),
+                }
+            },
+            None => Ok(format!(":-1\r\n"))
+        }
+    }
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){

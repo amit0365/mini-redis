@@ -146,6 +146,7 @@ pub async fn execute_commands(
         "ZRANK" => local_state.zrank(&commands)?,
         "ZRANGE" => local_state.zrange(&commands)?,
         "ZCARD" => local_state.zcard(&commands)?,
+        "ZSCORE" => local_state.zscore(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 
