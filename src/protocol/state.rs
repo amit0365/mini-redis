@@ -1034,9 +1034,9 @@ impl RedisState<Arc<str>, RedisValue>{
         let (key, longitude_str, lattitude_str, member) = (&commands[1], &commands[2], &commands[3], &commands[4]);
         let (longitude, lattitude) = (longitude_str.parse::<f64>()?, lattitude_str.parse::<f64>()?);
         if -180.0 >= longitude || longitude >= 180.0 {
-            Ok(format!("-ERR longitude is invlaid"))
+            Ok(format!("-ERR longitude is invlaid\r\n"))
         } else if -85.05112878 >= lattitude || lattitude >= 85.05112878 {
-            Ok(format!("-ERR lattitude is invlaid"))
+            Ok(format!("-ERR lattitude is invlaid\r\n"))
         } else { Ok(format!(":1\r\n"))}
         //let sorted_state_guard = self.sorted_set_state.set.read()?;
     }
