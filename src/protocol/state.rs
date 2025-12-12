@@ -1083,8 +1083,8 @@ impl RedisState<Arc<str>, RedisValue>{
         let sorted_state_guard = self.sorted_set_state.set.read()?;
         match sorted_state_guard.get(key){
             Some(sorted_state) => {
-                let from_score = sorted_state.members.get(from).ok_or(RedisError)?;
-                let to_score = sorted_state.members.get(to).ok_or(RedisError)?;
+                let from_score = sorted_state.members.get(from).ok_or(RedisError::KeyNotFound(from.to_string()))?;
+                let to_score = sorted_state.members.get(to).ok_or(RedisError::KeyNotFound(to.to_string()))?;
                 let from_coord = decode_score_to_coordinates(*from_score as u64);
                 let to_coord = decode_score_to_coordinates(*to_score as u64);
                 let distance = haversine_distance(from_coord, to_coord).to_string();
