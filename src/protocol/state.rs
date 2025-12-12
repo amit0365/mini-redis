@@ -1069,7 +1069,12 @@ impl RedisState<Arc<str>, RedisValue>{
                 encode_resp_value_array(&mut resp_array, &coordinates_array);
                 Ok(resp_array)
             },
-            None => Ok(format!("*1\r\n*-1\r\n"))
+            None => {
+                let null_arrays: Vec<Value> = members.iter().map(|_| Value::Null).collect();
+                let mut resp_array = String::new();
+                encode_resp_value_array(&mut resp_array, &null_arrays);
+                Ok(resp_array)
+            }
         }
     }
 
