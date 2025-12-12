@@ -1059,10 +1059,10 @@ impl RedisState<Arc<str>, RedisValue>{
                         let coordinates = decode_score_to_coordinates(*score as u64);
                         Ok(coordinates.as_resp_array())
                     },
-                    None => Ok(format!(":-1\r\n")),
+                    None => Ok(format!("*1\r\n*-1\r\n")),
                 }
             },
-            None => Ok(format!(":-1\r\n"))
+            None => Ok(format!("*1\r\n*-1\r\n"))
         }
     }
 
