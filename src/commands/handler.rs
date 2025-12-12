@@ -144,6 +144,7 @@ pub async fn execute_commands(
         "INFO" => local_state.info(&commands)?,
         "ZADD" => local_state.zadd(&commands)?,
         "ZRANK" => local_state.zrank(&commands)?,
+        "ZRANGE" => local_state.zrange(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 

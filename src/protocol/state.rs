@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::json;
 
-use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_resp_array_arc, encode_resp_array_str, encode_resp_value_array, parse_wrapback}};
+use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -959,6 +959,30 @@ impl RedisState<Arc<str>, RedisValue>{
                 }
             }
             None => Ok(format!("$-1\r\n"))
+        }
+    }
+
+    pub fn zrange(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let key = &commands[1];
+        let empty_array = format!("*0\r\n");
+        let (start, stop) = (commands[2].parse::<usize>()?, commands[3].parse::<usize>()?);
+        let sorted_state_guard = self.sorted_set_state.set.read()?;
+        match sorted_state_guard.get(key){
+            Some(sorted_state) => {
+                let set_len = sorted_state.scores.len();
+                if start >= sorted_state.scores.len(){
+                    Ok(empty_array)
+                } else if start > stop {
+                    Ok(empty_array)
+                } else if stop >= sorted_state.scores.len(){
+                    let elements = sorted_state.scores.iter().skip(start).take(set_len - start).map(|(_score, name)| name).collect::<Vec<_>>();
+                    Ok(encode_resp_ref_array_arc(&elements))
+                } else {
+                    let elements = sorted_state.scores.iter().skip(start).take(stop - start + 1).map(|(_score, name)| name).collect::<Vec<_>>();
+                    Ok(encode_resp_ref_array_arc(&elements))
+                }
+            }
+            None => Ok(empty_array)
         }
     }
 
