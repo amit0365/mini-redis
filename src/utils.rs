@@ -118,6 +118,7 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) {
                     encode_resp_value_array(encoded_array, val);
                 },
                 Value::String(s) => encoded_array.push_str(&format!("${}\r\n{}\r\n", s.len(), s)),
+                Value::Null => encoded_array.push_str("*-1\r\n"),
                 _ => (), //not supported
             }
         }

@@ -1,7 +1,7 @@
 use std::{collections::{BTreeSet, HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
 use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, parse_wrapback}};
 
@@ -1061,7 +1061,7 @@ impl RedisState<Arc<str>, RedisValue>{
                             let coordinates = decode_score_to_coordinates(*score as u64);
                             coordinates_array.push(coordinates.as_value());
                         },
-                        None => coordinates_array.push(json!([])),
+                        None => coordinates_array.push(Value::Null),
                     }
                 }
 
