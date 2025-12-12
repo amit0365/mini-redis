@@ -1070,7 +1070,7 @@ impl RedisState<Arc<str>, RedisValue>{
                 Ok(resp_array)
             },
             None => {
-                let null_arrays: Vec<Value> = members.iter().map(|_| Value::Null).collect();
+                let null_arrays = members.iter().map(|_| Value::Null).collect::<Vec<_>>();
                 let mut resp_array = String::new();
                 encode_resp_value_array(&mut resp_array, &null_arrays);
                 Ok(resp_array)
