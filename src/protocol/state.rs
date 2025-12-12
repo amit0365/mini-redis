@@ -1033,12 +1033,19 @@ impl RedisState<Arc<str>, RedisValue>{
     pub fn geoadd(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let (key, longitude_str, latitude_str, member) = (&commands[1], &commands[2], &commands[3], &commands[4]);
         let (longitude, latitude) = (longitude_str.parse::<f64>()?, latitude_str.parse::<f64>()?);
+        let mut sorted_state_guard = self.sorted_set_state.set.write()?;
+
         if -180.0 >= longitude || longitude >= 180.0 {
             Ok(format!("-ERR longitude is invlaid\r\n"))
         } else if -85.05112878 >= latitude || latitude >= 85.05112878 {
             Ok(format!("-ERR latitude is invlaid\r\n"))
-        } else { Ok(format!(":1\r\n"))}
-        //let sorted_state_guard = self.sorted_set_state.set.read()?;
+        } else { 
+            let sorted_state = sorted_state_guard.entry(Arc::clone(key)).or_insert_with(|| SortedSet::new());
+            sorted_state.members.insert(Arc::clone(&member), 0.0);
+            sorted_state.scores.insert((OrderedFloat::from(0), Arc::clone(&member)));
+
+            Ok(format!(":1\r\n"))
+        }
     }
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
