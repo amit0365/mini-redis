@@ -1030,6 +1030,12 @@ impl RedisState<Arc<str>, RedisValue>{
         }
     }
 
+    pub fn geoadd(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let (key, longitude, lattitue, member) = (&commands[1], &commands[2], &commands[3], &commands[4]);
+        //let sorted_state_guard = self.sorted_set_state.set.read()?;
+        Ok(format!(":1\r\n"))
+    }
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){
