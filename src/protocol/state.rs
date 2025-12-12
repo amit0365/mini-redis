@@ -965,11 +965,13 @@ impl RedisState<Arc<str>, RedisValue>{
     pub fn zrange(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let key = &commands[1];
         let empty_array = format!("*0\r\n");
-        let (start, stop) = (commands[2].parse::<usize>()?, commands[3].parse::<usize>()?);
         let sorted_state_guard = self.sorted_set_state.set.read()?;
         match sorted_state_guard.get(key){
             Some(sorted_state) => {
                 let set_len = sorted_state.scores.len();
+                let start = parse_wrapback(commands[2].parse::<i64>()?, set_len)?;
+                let stop = parse_wrapback(commands[3].parse::<i64>()?, set_len)?;
+
                 if start >= sorted_state.scores.len(){
                     Ok(empty_array)
                 } else if start > stop {
