@@ -1125,7 +1125,7 @@ impl RedisState<Arc<str>, RedisValue>{
             },
             "GETUSER" => {
                 let flags = "flags".to_string();
-                let array = vec![Value::String(flags), Value::Null];
+                let array = vec![Value::String(flags), json!([])];
                 let mut encoded_array = String::new();
                 encode_resp_value_array(&mut encoded_array, &array);
                 Ok(encoded_array)
