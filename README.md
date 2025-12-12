@@ -1,6 +1,6 @@
 # mini-redis
 
-A Redis-like server implementation written in Rust using async/await with Tokio. This project implements a subset of Redis's functionality, focusing on core commands, data structures, replication, and pub/sub. This project was built as part of the [Build your own Redis](https://app.codecrafters.io/courses/redis/overview).
+A Redis server implementation written from scratch in Rust using Tokio. This project implements a subset of Redis's functionality, focusing on core commands, data structures, replication, and pub/sub. This project was built as part of the [Build your own Redis](https://app.codecrafters.io/courses/redis/overview).
 
 ## Architecture
 
@@ -18,6 +18,8 @@ A Redis-like server implementation written in Rust using async/await with Tokio.
 - **String:** `SET`, `GET`, `INCR`
 - **List:** `LPUSH`, `RPUSH`, `LRANGE`, `LLEN`, `LPOP`, `BLPOP`
 - **Stream:** `XADD`, `XRANGE`, `XREAD`
+- **Sorted Set:** `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE`, `ZREM`
+- **Geospatial:** `GEOADD`, `GEOPOS`, `GEODIST`, `GEOSEARCH`
 - **Transactions:** `MULTI`, `EXEC`, `DISCARD`
 - **Pub/Sub:** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`
 - **Connection:** `PING`, `ECHO`
@@ -97,6 +99,26 @@ A Redis-like server implementation written in Rust using async/await with Tokio.
 - Publish a message
 - Deliver messages
 - Unsubscribe
+
+### Sorted Sets
+- Create a sorted set
+- Add members
+- Retrieve member rank
+- List sorted set members
+- ZRANGE with negative indexes
+- Count sorted set members
+- Retrieve member score
+- Remove a member
+
+### Geospatial Commands
+- Respond to GEOADD
+- Validate coordinates
+- Store a location
+- Calculate location score
+- Respond to GEOPOS
+- Decode coordinates
+- Calculate distance
+- Search within radius
 
 ## Getting Started
 
