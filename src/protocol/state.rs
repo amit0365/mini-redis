@@ -934,14 +934,16 @@ impl RedisState<Arc<str>, RedisValue>{
         let args = &commands[2..];
         for i in (0..args.len()).step_by(2){
             let score = args[i].parse::<f64>()?;
-            sorted_state.scores.insert((OrderedFloat::from(score), Arc::clone(&args[i+1])));
-
-            if sorted_state.members.get(&args[i+1]).is_none(){
-                sorted_state.members.insert(Arc::clone(&args[i+1]), score);
-                new_members += 1;
+            let member = &args[i+1];
+            if let Some(old_score) = sorted_state.members.get_mut(member){
+                sorted_state.scores.remove(&(OrderedFloat::from(*old_score), Arc::clone(member)));
+                *old_score = score;
             } else {
-                sorted_state.members.entry(Arc::clone(&args[i+1])).and_modify(|prev_score| *prev_score = score);
+                sorted_state.members.insert(Arc::clone(&member), score);
+                new_members += 1;
             }
+
+            sorted_state.scores.insert((OrderedFloat::from(score), Arc::clone(&member)));
         }
 
         Ok(format!(":{}\r\n", new_members))

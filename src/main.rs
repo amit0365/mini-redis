@@ -40,7 +40,6 @@ async fn main() {
         }
 
         let client_addr = Arc::from(addr.to_string());
-        println!("client_addr {}", client_addr);
         client::spawn_client_handler(
             stream,
             client_addr,
