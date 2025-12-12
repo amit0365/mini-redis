@@ -123,6 +123,20 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) {
             }
         }
     }
+
+    pub fn encode_resp_redis_value_array(encoded_array: &mut String, array: &Vec<RedisValue>) {
+        encoded_array.push_str(&format!["*{}\r\n", array.len()]);
+        for item in array {
+            match item{
+                RedisValue::Array(val) => {
+                    encode_resp_redis_value_array(encoded_array, val);
+                },
+                RedisValue::String(s) => encoded_array.push_str(&format!("${}\r\n{}\r\n", s.len(), s)),
+                RedisValue::Null => encoded_array.push_str("*-1\r\n"),
+                _ => (), //not supported
+            }
+        }
+    }
     
 pub fn parse_resp(buf: &[u8]) -> RedisResult<Vec<Arc<str>>> {
     let string_buf = std::str::from_utf8(buf)?;

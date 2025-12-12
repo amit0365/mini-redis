@@ -1,4 +1,4 @@
-use std::{collections::{BTreeSet, HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap, HashSet, VecDeque}, iter, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
 use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::{json, Value};
@@ -11,7 +11,8 @@ pub struct RedisState<K, RedisValue> {
     map_state: MapState<K, RedisValue>,
     list_state: ListState<K, RedisValue>,
     sorted_set_state: SortedSetState<K>,
-    server_state: ServerState<K, RedisValue>
+    server_state: ServerState<K, RedisValue>,
+    users_state: UserState<K, Arc<Vec<RedisValue>>>
 }
 
 impl<K, RedisValue> RedisState<K, RedisValue> {
@@ -456,6 +457,40 @@ impl<K> SortedSetState<K>{
     }
 }
 
+#[derive(Clone)]
+pub struct UserState<K, V>{
+    users: Arc<RwLock<HashMap<K, AclUser<K, V>>>>
+}
+
+#[derive(Clone)]
+pub struct AclUser<K, V>{
+    properties: HashMap<K, V>,
+    password: Arc<str>
+}
+
+impl UserState<Arc<str>, Arc<Vec<RedisValue>>>{
+    fn new() -> Self{
+        UserState { users: Arc::new(RwLock::new(HashMap::new())) }
+    }
+
+    fn getuser(&self, user: &Arc<str>) -> RedisResult<Vec<RedisValue>>{
+        let users = self.users.read()?;
+        match users.get(user){
+            Some(acl_user) => {
+                let properties_vec = acl_user.properties.iter().flat_map(|(k, v)| {
+                    [
+                        RedisValue::String(Arc::clone(k)),
+                        RedisValue::Array(Arc::clone(v))
+                    ]                
+                }).collect::<Vec<_>>();
+                Ok(properties_vec)
+            },
+            None => Ok(Vec::new()),
+        }
+    }
+
+}
+
 impl RedisState<Arc<str>, RedisValue>{
     pub fn new() -> Self{
         let channels_state = ChannelState::new();
@@ -463,7 +498,8 @@ impl RedisState<Arc<str>, RedisValue>{
         let list_state = ListState::new();
         let server_state = ServerState::new();
         let sorted_set_state = SortedSetState::new();
-        RedisState { channels_state, map_state, list_state, server_state, sorted_set_state }
+        let users_state = UserState::new();
+        RedisState { channels_state, map_state, list_state, server_state, sorted_set_state, users_state }
     }
 
     pub fn psync(&self) -> RedisResult<String> {
@@ -747,6 +783,8 @@ impl RedisState<Arc<str>, RedisValue>{
         let response = match map_guard.get(&commands[1]){
             Some(val) => {
                 match val{
+                    RedisValue::Null => "none".to_string(),
+                    RedisValue::Array(_) => "list".to_string(),
                     RedisValue::String(_) => "string".to_string(),
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
                     RedisValue::Stream(_) => "stream".to_string(),
@@ -1117,7 +1155,7 @@ impl RedisState<Arc<str>, RedisValue>{
 
     }
 
-    pub fn acl_whoami(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+    pub fn acl(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         match commands[1].to_uppercase().as_str() {
             "WHOAMI" => {
                 let def = "default".to_string();
@@ -1129,6 +1167,9 @@ impl RedisState<Arc<str>, RedisValue>{
                 encode_resp_value_array(&mut encoded_array, &array);
                 Ok(encoded_array)
             },
+            // "SETUSER" => {
+
+            // }
             _ => Ok("$-1\r\n".to_string()),
         }
     }
