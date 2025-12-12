@@ -319,7 +319,7 @@ pub fn decode_score_to_coordinates(geo_code: u64) -> Coordinates {
 }
 
 pub fn haversine_distance(origin: Coordinates, destination: Coordinates) -> f64 {
-    const R: f64 = 6372.8;
+    const R: f64 = 6372797.56;
 
     let lat1 = origin.latitude.to_radians();
     let lat2 = destination.latitude.to_radians();
