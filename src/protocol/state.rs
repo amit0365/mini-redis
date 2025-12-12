@@ -988,6 +988,15 @@ impl RedisState<Arc<str>, RedisValue>{
         }
     }
 
+    pub fn zcard(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let key = &commands[1];
+        let sorted_state_guard = self.sorted_set_state.set.read()?;
+        match sorted_state_guard.get(key){
+            Some(sorted_state) => Ok(format!(":{}\r\n", sorted_state.scores.len())),
+            None => Ok(format!(":0\r\n"))
+        }
+    }
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){
