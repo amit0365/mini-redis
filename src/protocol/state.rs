@@ -947,6 +947,21 @@ impl RedisState<Arc<str>, RedisValue>{
         Ok(format!(":{}\r\n", new_members))
     } 
 
+    pub fn zrank(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let key = &commands[1];
+        let memeber_name = &commands[2];
+        let sorted_state_guard = self.sorted_set_state.set.read()?;
+        match sorted_state_guard.get(key){
+            Some(sorted_state) => {
+                match sorted_state.scores.iter().position(|(_, member)| member == memeber_name){
+                    Some(rank) => Ok(format!(":{}\r\n", rank)),
+                    None => Ok(format!("$-1\r\n"))
+                }
+            }
+            None => Ok(format!("$-1\r\n"))
+        }
+    }
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){

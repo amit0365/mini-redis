@@ -143,6 +143,7 @@ pub async fn execute_commands(
         "MULTI" => local_state.multi(client_state)?,
         "INFO" => local_state.info(&commands)?,
         "ZADD" => local_state.zadd(&commands)?,
+        "ZRANK" => local_state.zrank(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 
