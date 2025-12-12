@@ -1105,7 +1105,7 @@ impl RedisState<Arc<str>, RedisValue>{
             Some(sorted_state) => {
                 for (member, score) in sorted_state.members.iter(){
                     let to_coord = decode_score_to_coordinates(*score as u64);
-                    if radius < haversine_distance(&from_coord, &to_coord){
+                    if radius > haversine_distance(&from_coord, &to_coord){
                         within_radius.push(member.as_ref());
                     }
                 }
