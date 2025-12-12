@@ -1016,6 +1016,20 @@ impl RedisState<Arc<str>, RedisValue>{
         }
     }
 
+    pub fn zrem(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let (key, member) = (&commands[1], &commands[2]);
+        let mut sorted_state_guard = self.sorted_set_state.set.write()?;
+        match sorted_state_guard.get_mut(key){
+            Some(sorted_state) => {
+                if let Some(score) = sorted_state.members.remove(member){
+                    sorted_state.scores.remove(&(OrderedFloat::from(score), Arc::clone(member)));
+                    Ok(format!(":1\r\n"))
+                } else { Ok(format!(":0\r\n")) }
+            },
+            None => Ok(format!(":0\r\n"))
+        }
+    }
+
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);
         let subs_count = if client_state.get_subscriptions().1.contains(&commands[1]){
