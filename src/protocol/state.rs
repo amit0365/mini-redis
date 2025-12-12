@@ -1061,7 +1061,7 @@ impl RedisState<Arc<str>, RedisValue>{
                             let coordinates = decode_score_to_coordinates(*score as u64);
                             coordinates_array.push(coordinates.as_value());
                         },
-                        None => coordinates_array.push(json!(["".to_string(), "".to_string()])),
+                        None => coordinates_array.push(json!([])),
                     }
                 }
 
