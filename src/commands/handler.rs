@@ -151,6 +151,7 @@ pub async fn execute_commands(
         "GEOADD" => local_state.geoadd(&commands)?,
         "GEOPOS" => local_state.geopos(&commands)?,
         "GEODIST" => local_state.geodist(&commands)?,
+        "GEOSEARCH" => local_state.geosearch(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 

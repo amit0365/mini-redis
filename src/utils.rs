@@ -283,6 +283,11 @@ impl Coordinates {
     }
 }
 
+pub fn coord_from_str(longitude_str: &Arc<str>, latitude_str: &Arc<str>) -> RedisResult<Coordinates>{
+    let (longitude, latitude) = (longitude_str.parse::<f64>()?, latitude_str.parse::<f64>()?);
+    Ok(Coordinates { latitude, longitude })
+}
+
 fn compact_int64_to_int32(v: u64) -> u32 {
     let mut result = v & 0x5555555555555555;
     result = (result | (result >> 1)) & 0x3333333333333333;
@@ -318,7 +323,7 @@ pub fn decode_score_to_coordinates(geo_code: u64) -> Coordinates {
     convert_grid_numbers_to_coordinates(grid_latitude_number, grid_longitude_number)
 }
 
-pub fn haversine_distance(origin: Coordinates, destination: Coordinates) -> f64 {
+pub fn haversine_distance(origin: &Coordinates, destination: &Coordinates) -> f64 {
     const R: f64 = 6372797.560856;
 
     let lat1 = origin.latitude.to_radians();

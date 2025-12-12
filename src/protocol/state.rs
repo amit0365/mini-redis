@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::{json, Value};
 
-use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, haversine_distance, parse_wrapback}};
+use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, haversine_distance, parse_wrapback, coord_from_str}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -1087,8 +1087,30 @@ impl RedisState<Arc<str>, RedisValue>{
                 let to_score = sorted_state.members.get(to).ok_or(RedisError::KeyNotFound(to.to_string()))?;
                 let from_coord = decode_score_to_coordinates(*from_score as u64);
                 let to_coord = decode_score_to_coordinates(*to_score as u64);
-                let distance = haversine_distance(from_coord, to_coord).to_string();
+                let distance = haversine_distance(&from_coord, &to_coord).to_string();
                 Ok(format!("${}\r\n{}\r\n", distance.len(), distance))
+            }
+            None => Ok("$-1\r\n".to_string())
+        }
+
+    }
+
+    pub fn geosearch(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let (key, lon_str, lat_str, radius_str) = (&commands[1], &commands[3], &commands[4], &commands[6]);
+        let sorted_state_guard = self.sorted_set_state.set.read()?;
+        let from_coord = coord_from_str(lon_str, lat_str)?;
+        let radius = radius_str.parse::<f64>()?;
+        let mut within_radius = Vec::new();
+        match sorted_state_guard.get(key){
+            Some(sorted_state) => {
+                for (member, score) in sorted_state.members.iter(){
+                    let to_coord = decode_score_to_coordinates(*score as u64);
+                    if radius < haversine_distance(&from_coord, &to_coord){
+                        within_radius.push(member.as_ref());
+                    }
+                }
+
+                Ok(encode_resp_array_str(&within_radius))
             }
             None => Ok("$-1\r\n".to_string())
         }
