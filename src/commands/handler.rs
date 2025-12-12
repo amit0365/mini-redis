@@ -150,6 +150,7 @@ pub async fn execute_commands(
         "ZREM" => local_state.zrem(&commands)?,
         "GEOADD" => local_state.geoadd(&commands)?,
         "GEOPOS" => local_state.geopos(&commands)?,
+        "GEODIST" => local_state.geodist(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 

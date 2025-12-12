@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::{json, Value};
 
-use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, parse_wrapback}};
+use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, haversine_distance, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -1076,6 +1076,23 @@ impl RedisState<Arc<str>, RedisValue>{
                 Ok(resp_array)
             }
         }
+    }
+
+    pub fn geodist(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let (key, from, to) = (&commands[1], &commands[2], &commands[3]);
+        let sorted_state_guard = self.sorted_set_state.set.read()?;
+        match sorted_state_guard.get(key){
+            Some(sorted_state) => {
+                let from_score = sorted_state.members.get(from).ok_or(RedisError)?;
+                let to_score = sorted_state.members.get(to).ok_or(RedisError)?;
+                let from_coord = decode_score_to_coordinates(*from_score as u64);
+                let to_coord = decode_score_to_coordinates(*to_score as u64);
+                let distance = haversine_distance(from_coord, to_coord).to_string();
+                Ok(format!("${}\r\n{}\r\n", distance.len(), distance))
+            }
+            None => Ok("$-1\r\n".to_string())
+        }
+
     }
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
