@@ -821,7 +821,6 @@ impl RedisState<Arc<str>, RedisValue>{
         let response = match map_guard.get(&commands[1]){
             Some(val) => {
                 match val{
-                    RedisValue::Null => "none".to_string(),
                     RedisValue::Flags(_) => "flags".to_string(),
                     RedisValue::Array(_) => "list".to_string(),
                     RedisValue::String(_) => "string".to_string(),
