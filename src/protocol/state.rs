@@ -1,9 +1,11 @@
-use std::{collections::{BTreeSet, HashMap, HashSet, VecDeque}, iter, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap, HashSet, VecDeque}, marker::PhantomData, sync::{Arc, Mutex, RwLock}, time::{Duration, Instant}};
+use indexmap::IndexMap;
 use ordered_float::OrderedFloat;
 use tokio::{sync::mpsc::{self, Receiver, Sender, error::TrySendError}, time::sleep};
 use serde_json::{json, Value};
+use sha2::{Sha256, Digest};
 
-use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_ref_array_arc, encode_resp_value_array, haversine_distance, parse_wrapback, coord_from_str}};
+use crate::{error::{RedisError, RedisResult}, protocol::{RedisValue, StreamValue, value::redis_value_as_string}, utils::{collect_as_strings, coord_from_str, decode_score_to_coordinates, encode_coordinates_to_score, encode_resp_array_arc, encode_resp_array_str, encode_resp_redis_value_array, encode_resp_ref_array_arc, encode_resp_value_array, haversine_distance, parse_wrapback}};
 
 #[derive(Clone)]
 pub struct RedisState<K, RedisValue> {
@@ -12,7 +14,7 @@ pub struct RedisState<K, RedisValue> {
     list_state: ListState<K, RedisValue>,
     sorted_set_state: SortedSetState<K>,
     server_state: ServerState<K, RedisValue>,
-    users_state: UserState<K, Arc<Vec<RedisValue>>>
+    users_state: UserState<K>
 }
 
 impl<K, RedisValue> RedisState<K, RedisValue> {
@@ -34,6 +36,10 @@ impl<K, RedisValue> RedisState<K, RedisValue> {
 
     pub fn server_state_mut(&mut self) -> &mut ServerState<K, RedisValue> {
         &mut self.server_state
+    }
+
+    pub fn users_state_mut(&mut self) -> &mut UserState<K> {
+        &mut self.users_state
     }
 }
 
@@ -154,6 +160,7 @@ impl ServerState<Arc<str>, RedisValue>{
 
 //subscribe and preokicaiton state should be optional
 pub struct ClientState<K, V>{
+    current_user: Arc<AclUser<K>>,
     queued_state: QueuedState<K, V>,
     subscription_state: SubscriptionState<K, V>,
     replication_state: ReplicationState<K, V>,
@@ -305,6 +312,7 @@ impl<K, V> QueuedState<K, V> {
 impl ClientState<Arc<str>, Arc<str>>{
     pub fn new() -> Self{
         ClientState {
+            current_user: Arc::from(AclUser::default()),
             queued_state: QueuedState::new(),
             subscription_state: SubscriptionState::new(),
             replication_state: ReplicationState::new(),
@@ -458,19 +466,41 @@ impl<K> SortedSetState<K>{
 }
 
 #[derive(Clone)]
-pub struct UserState<K, V>{
-    users: Arc<RwLock<HashMap<K, AclUser<K, V>>>>
+pub struct UserState<K>{
+    users: Arc<RwLock<HashMap<K, AclUser<K>>>>
 }
 
 #[derive(Clone)]
-pub struct AclUser<K, V>{
-    properties: HashMap<K, V>,
-    password: Arc<str>
+pub struct AclUser<K>{
+    properties: IndexMap<K, RedisValue>,
 }
 
-impl UserState<Arc<str>, Arc<Vec<RedisValue>>>{
-    fn new() -> Self{
-        UserState { users: Arc::new(RwLock::new(HashMap::new())) }
+impl AclUser<Arc<str>>{
+    fn default() -> Self {
+        let mut properties = IndexMap::new();
+        let mut flags = HashSet::new();
+        flags.insert(Arc::from("nopass"));
+        properties.insert(Arc::from("flags"), RedisValue::Flags(flags));
+        properties.insert(Arc::from("passwords"), RedisValue::Array(Arc::from(vec![])));
+        Self { properties }
+    }
+
+    fn update_password(&mut self, password: String) -> RedisResult<()>{
+        if let Some(passwords) = self.properties.get_mut(&Arc::from("passwords")){
+            *passwords = RedisValue::Array(Arc::from(vec![RedisValue::String(Arc::from(password))]))
+        }
+        if let Some(RedisValue::Flags(flags)) = self.properties.get_mut(&Arc::from("flags")){
+            flags.remove(&Arc::from("nopass"));
+        }
+        Ok(())
+    }
+}
+
+impl UserState<Arc<str>>{
+    fn new() -> Self {
+        let mut users = HashMap::new();
+        users.insert(Arc::from("default"), AclUser::default());
+        UserState { users: Arc::new(RwLock::new(users)) }
     }
 
     fn getuser(&self, user: &Arc<str>) -> RedisResult<Vec<RedisValue>>{
@@ -480,8 +510,8 @@ impl UserState<Arc<str>, Arc<Vec<RedisValue>>>{
                 let properties_vec = acl_user.properties.iter().flat_map(|(k, v)| {
                     [
                         RedisValue::String(Arc::clone(k)),
-                        RedisValue::Array(Arc::clone(v))
-                    ]                
+                        v.clone()
+                    ]
                 }).collect::<Vec<_>>();
                 Ok(properties_vec)
             },
@@ -489,6 +519,14 @@ impl UserState<Arc<str>, Arc<Vec<RedisValue>>>{
         }
     }
 
+    fn set_password(&mut self, user: &Arc<str>, password: String) -> RedisResult<()>{
+        let mut users = self.users.write()?;
+        if let Some(acl_user) = users.get_mut(user){
+            acl_user.update_password(password)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl RedisState<Arc<str>, RedisValue>{
@@ -784,6 +822,7 @@ impl RedisState<Arc<str>, RedisValue>{
             Some(val) => {
                 match val{
                     RedisValue::Null => "none".to_string(),
+                    RedisValue::Flags(_) => "flags".to_string(),
                     RedisValue::Array(_) => "list".to_string(),
                     RedisValue::String(_) => "string".to_string(),
                     RedisValue::StringWithTimeout(_) => "string".to_string(),
@@ -1155,21 +1194,29 @@ impl RedisState<Arc<str>, RedisValue>{
 
     }
 
-    pub fn acl(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+    pub fn acl(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         match commands[1].to_uppercase().as_str() {
             "WHOAMI" => {
                 let def = "default".to_string();
                 Ok(format!("${}\r\n{}\r\n", def.len(), def))
             },
             "GETUSER" => {
-                let array = vec![Value::String("flags".to_string()), json!(["nopass"]), Value::String("passwords".to_string()), json!([])];
+                let user = &commands[2];
+                let array = self.users_state.getuser(user)?;
                 let mut encoded_array = String::new();
-                encode_resp_value_array(&mut encoded_array, &array);
+                encode_resp_redis_value_array(&mut encoded_array, &array);
                 Ok(encoded_array)
             },
-            // "SETUSER" => {
+            "SETUSER" => {
+                let user = &commands[2];
+                if commands[3].starts_with(">"){
+                    let password = commands[3].strip_prefix(">").unwrap();
+                    let hashed_password = format!("{:x}", Sha256::digest(password));
+                    self.users_state_mut().set_password(user, hashed_password)?;
+                }
 
-            // }
+                Ok("+OK\r\n".to_string())
+            }
             _ => Ok("$-1\r\n".to_string()),
         }
     }

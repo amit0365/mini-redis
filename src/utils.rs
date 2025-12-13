@@ -133,6 +133,12 @@ pub fn encode_resp_value_array(encoded_array: &mut String, array: &Vec<Value>) {
                 },
                 RedisValue::String(s) => encoded_array.push_str(&format!("${}\r\n{}\r\n", s.len(), s)),
                 RedisValue::Null => encoded_array.push_str("*-1\r\n"),
+                RedisValue::Flags(flags) => {
+                    encoded_array.push_str(&format!("*{}\r\n", flags.len()));
+                    for flag in flags {
+                        encoded_array.push_str(&format!("${}\r\n{}\r\n", flag.len(), flag));
+                    }
+                },
                 _ => (), //not supported
             }
         }

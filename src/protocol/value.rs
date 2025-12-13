@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashMap}, fmt, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::{BTreeMap, HashMap, HashSet}, fmt, sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
 use serde::Serialize;
 use serde_json::{Value, json};
 use crate::error::{RedisError, RedisResult};
@@ -11,6 +11,7 @@ pub enum RedisValue{
     Number(u64),
     StringWithTimeout((Arc<str>, Instant)),
     Stream(StreamValue<Arc<str>, Arc<str>>),
+    Flags(HashSet<Arc<str>>),
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +63,7 @@ impl fmt::Display for RedisValue {
             RedisValue::Number(n) => write!(f, "{}", n),
             RedisValue::StringWithTimeout((s, _)) => write!(f, "{}", s),
             RedisValue::Stream(_) => write!(f, "stream"),
+            RedisValue::Flags(flags) => write!(f, "{:?}", flags),
         }
     }
 }
@@ -74,6 +76,7 @@ pub fn redis_value_as_string(val: RedisValue) -> Option<Arc<str>> {
         RedisValue::Stream(_) => None,
         RedisValue::Number(_) => None,
         RedisValue::Null => None,
+        RedisValue::Flags(_) => None,
     }
 }
 
@@ -86,6 +89,14 @@ impl RedisValue{
             RedisValue::Stream(_) => None,
             RedisValue::Number(_) => None,
             RedisValue::Null => None,
+            RedisValue::Flags(_) => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<Arc<Vec<RedisValue>>> {
+        match self {
+            RedisValue::Array(arr) => Some(Arc::clone(arr)),
+            _ => None,
         }
     }
 
@@ -96,6 +107,7 @@ impl RedisValue{
             RedisValue::Array(_) => None,
             RedisValue::Number(_) => None,
             RedisValue::StringWithTimeout((_, _)) => None,
+            RedisValue::Flags(_) => None,
             RedisValue::Stream(val) => {
                 let (id, pairs) = &val.waiters_value;
                 let pairs_flattened = pairs.iter().flat_map(|(k, v)| [k.as_ref(), v.as_ref()]).collect::<Vec<&str>>();
@@ -111,6 +123,7 @@ impl RedisValue{
             RedisValue::Null => Ok(Vec::new()),
             RedisValue::Array(_) => Ok(Vec::new()),
             RedisValue::StringWithTimeout((_, _)) => Ok(Vec::new()), // fix error handling,
+            RedisValue::Flags(_) => Ok(Vec::new()),
             RedisValue::Stream(stream) => {
                 let mut entries = Vec::new();
                 if let Some((start_id_pre, start_id_post)) = start_id.split_once("-"){
@@ -179,7 +192,7 @@ impl RedisValue{
     pub fn update_stream(&mut self, id: &Arc<str>, pairs: Arc<Vec<(Arc<str>, Arc<str>)>>) -> RedisResult<String>{
         match self{
             RedisValue::String(_) | RedisValue::Number(_) | RedisValue::Null |
-            RedisValue::Array(_) | RedisValue::StringWithTimeout(_) => {
+            RedisValue::Array(_) | RedisValue::StringWithTimeout(_) | RedisValue::Flags(_) => {
                 Err(RedisError::WrongType("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()))
             },
             RedisValue::Stream(stream) => {

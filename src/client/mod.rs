@@ -45,7 +45,7 @@ pub async fn handle_client_connection(
     let mut local_state = state;
     let mut local_replicas_state = replicas_state;
     let mut client_state = ClientState::new();
-
+ 
     loop {
         let result = if client_state.is_subscribe_mode() {
             handle_subscribe_mode(
