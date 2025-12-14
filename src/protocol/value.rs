@@ -89,6 +89,21 @@ impl RedisValue{
         }
     }
 
+    pub fn array_contains(&self, value: &Arc<str>) -> RedisResult<bool>{
+        match self {
+            RedisValue::Array(arr) => {
+                return Ok(arr.iter().any(|item| {
+                    match item {
+                        RedisValue::String(s) => s.as_ref() == value.as_ref(),
+                        RedisValue::StringWithTimeout((s, _)) => s.as_ref() == value.as_ref(),
+                        _ => false,
+                    }
+                }))
+            },
+            _ => Err(RedisError::WrongType("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())),
+        }
+    }
+
     pub fn get_blocked_result(&self) -> Option<Vec<Value>> {
         match self{
             RedisValue::String(_) => None,

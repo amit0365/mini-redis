@@ -153,6 +153,7 @@ pub async fn execute_commands(
         "GEODIST" => local_state.geodist(&commands)?,
         "GEOSEARCH" => local_state.geosearch(&commands)?,
         "ACL" => local_state.acl(&commands)?,
+        "AUTH" => local_state.auth(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 

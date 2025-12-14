@@ -494,6 +494,13 @@ impl AclUser<Arc<str>>{
         }
         Ok(())
     }
+
+    fn check_password(&self, password: &Arc<str>) -> RedisResult<bool>{
+        match self.properties.get(&Arc::from("passwords")){
+            Some(passwords) => passwords.array_contains(password),
+            None => Err(RedisError::KeyNotFound("passwords".to_string())),
+        }
+    }
 }
 
 impl UserState<Arc<str>>{
@@ -526,6 +533,14 @@ impl UserState<Arc<str>>{
         }
 
         Ok(())
+    }
+
+    fn check_password(&self, user: &Arc<str>, password: &Arc<str>) -> RedisResult<bool>{
+        let users = self.users.read()?;
+        match users.get(user){
+            Some(acl_user) => acl_user.check_password(password),
+            None => Err(RedisError::KeyNotFound(user.to_string())),
+        }
     }
 }
 
@@ -1217,6 +1232,16 @@ impl RedisState<Arc<str>, RedisValue>{
                 Ok("+OK\r\n".to_string())
             }
             _ => Ok("$-1\r\n".to_string()),
+        }
+    }
+
+    pub fn auth(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let username = &commands[1];
+        let password = &commands[2];
+        match self.users_state.check_password(username, password){
+            Ok(true) => Ok("+OK\r\n".to_string()),
+            Ok(false) => Ok(format!("-ERR WRONGPASS wrong password\r\n")),
+            Err(e) => Err(e),
         }
     }
 
