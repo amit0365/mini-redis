@@ -257,6 +257,14 @@ pub async fn configure_server_role(
     state: &mut RedisState<Arc<str>, RedisValue>,
     replicas_state: ReplicasState,
 ) -> Option<tokio::task::JoinHandle<()>> {
+    // Store RDB config values
+    if let Some(ref dir) = config.dir {
+        state.server_state_mut().map_mut().insert(Arc::from("dir"), RedisValue::String(Arc::clone(dir)));
+    }
+    if let Some(ref dbfilename) = config.dbfilename {
+        state.server_state_mut().map_mut().insert(Arc::from("dbfilename"), RedisValue::String(Arc::clone(dbfilename)));
+    }
+
     if let Some(_) = config.master_contact_for_slave { // when replica connects to the master
         state.server_state_mut().map_mut().insert(Arc::from("role"), RedisValue::String(Arc::from("slave")));
         Some(initialize_replica_connection(config, state.clone(), replicas_state).await)

@@ -173,7 +173,7 @@ impl CurrentUser<Arc<str>>{
     }
 }
 
-//subscribe and preokicaiton state should be optional
+//subscribe and replication state should be optional
 pub struct ClientState<K, V>{
     current_user: CurrentUser<K>,
     queued_state: QueuedState<K, V>,
@@ -1285,6 +1285,22 @@ impl RedisState<Arc<str>, RedisValue>{
             Err(e) => Err(e),
         }
     }
+
+    pub fn config(&self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        match commands[1].to_uppercase().as_str() {
+            "GET" => {
+                let param_name = commands[2].to_lowercase();
+                match self.server_state().map().get(&Arc::from(param_name.as_str())) {
+                    Some(RedisValue::String(value)) => {
+                        Ok(encode_resp_array_str(&[&param_name, value]))
+                    },
+                    _ => Ok("*0\r\n".to_string()),
+                }
+            },
+            _ => Ok("$-1\r\n".to_string()),
+        }
+    }
+
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);

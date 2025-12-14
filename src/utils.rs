@@ -10,12 +10,16 @@ pub const EMPTY_RDB_FILE: &str = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLW
 pub struct ServerConfig {
     pub port: Arc<str>,
     pub master_contact_for_slave: Option<Arc<str>>,
+    pub dir: Option<Arc<str>>,
+    pub dbfilename: Option<Arc<str>>,
 }
 
 impl ServerConfig {
     pub fn parse_from_args(args: Vec<String>) -> Self {
         let mut port = "6379";
         let mut master_contact_for_slave: Option<Arc<str>> = None;
+        let mut dir: Option<Arc<str>> = None;
+        let mut dbfilename: Option<Arc<str>> = None;
 
         let mut i = 1;
         while i < args.len() {
@@ -28,6 +32,14 @@ impl ServerConfig {
                     master_contact_for_slave = Some(Arc::from(args[i + 1].as_str()));
                     i += 2;
                 },
+                "--dir" => {
+                    dir = Some(Arc::from(args[i + 1].as_str()));
+                    i += 2;
+                },
+                "--dbfilename" => {
+                    dbfilename = Some(Arc::from(args[i + 1].as_str()));
+                    i += 2;
+                },
                 _ => i += 1,
             }
         }
@@ -35,6 +47,8 @@ impl ServerConfig {
         ServerConfig {
             port: Arc::from(port),
             master_contact_for_slave,
+            dir,
+            dbfilename,
         }
     }
 }
