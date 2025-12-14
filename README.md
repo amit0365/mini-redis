@@ -4,7 +4,8 @@ A Redis server implementation written from scratch in Rust using Tokio. This pro
 
 ## Demo
 
-<video src="redis-demo.mov" controls width="100%"></video>
+https://github.com/user-attachments/assets/bfeb7788-ece7-414c-a541-3eed2920896e
+
 
 ## Architecture
 
