@@ -15,7 +15,17 @@ pub async fn execute_commands(
     client_addr: &Arc<str>,
     commands: &Vec<Arc<str>>
 ) -> RedisResult<String>{
-    let response = match commands[0].to_uppercase().as_str() {
+    // Check authentication - only AUTH command is allowed without authentication
+    let cmd = commands[0].to_uppercase();
+    if !client_state.is_authenticated() && cmd != "AUTH" {
+        let response = "-NOAUTH Authentication required.\r\n".to_string();
+        if write_to_stream {
+            stream.write_all(response.as_bytes()).await?;
+        }
+        return Ok(response);
+    }
+
+    let response = match cmd.as_str() {
         "PING" => format!("+PONG\r\n"),
         "ECHO" => format!("${}\r\n{}\r\n", &commands[1].len(), &commands[1]), // fix multiple arg will fail like hello world. check to use .join("")
         "REPLCONF" => {
@@ -153,7 +163,7 @@ pub async fn execute_commands(
         "GEODIST" => local_state.geodist(&commands)?,
         "GEOSEARCH" => local_state.geosearch(&commands)?,
         "ACL" => local_state.acl(&commands)?,
-        "AUTH" => local_state.auth(&commands)?,
+        "AUTH" => local_state.auth(client_state, &commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 

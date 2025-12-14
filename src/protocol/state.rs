@@ -41,6 +41,10 @@ impl<K, RedisValue> RedisState<K, RedisValue> {
     pub fn users_state_mut(&mut self) -> &mut UserState<K> {
         &mut self.users_state
     }
+
+    pub fn users_state(&self) -> &UserState<K> {
+        &self.users_state
+    }
 }
 
 #[derive(Clone)]
@@ -158,9 +162,20 @@ impl ServerState<Arc<str>, RedisValue>{
     }
 }
 
+pub struct CurrentUser<K> {
+    acl_user: Arc<AclUser<K>>,
+    is_authenticated: bool,
+}
+
+impl CurrentUser<Arc<str>>{
+    fn new(default_user_requires_auth: bool) -> Self{
+        CurrentUser { acl_user: Arc::from(AclUser::default()), is_authenticated: default_user_requires_auth }
+    }
+}
+
 //subscribe and preokicaiton state should be optional
 pub struct ClientState<K, V>{
-    current_user: Arc<AclUser<K>>,
+    current_user: CurrentUser<K>,
     queued_state: QueuedState<K, V>,
     subscription_state: SubscriptionState<K, V>,
     replication_state: ReplicationState<K, V>,
@@ -310,13 +325,21 @@ impl<K, V> QueuedState<K, V> {
 }
 
 impl ClientState<Arc<str>, Arc<str>>{
-    pub fn new() -> Self{
+    pub fn new(is_authenticated: bool) -> Self{
         ClientState {
-            current_user: Arc::from(AclUser::default()),
+            current_user: CurrentUser::new(is_authenticated),
             queued_state: QueuedState::new(),
             subscription_state: SubscriptionState::new(),
             replication_state: ReplicationState::new(),
         }
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.current_user.is_authenticated
+    }
+
+    pub fn set_authenticated(&mut self, authenticated: bool) {
+        self.current_user.is_authenticated = authenticated;
     }
 
     pub fn set_replica_id(&mut self, id: usize){
@@ -541,6 +564,20 @@ impl UserState<Arc<str>>{
         match users.get(user){
             Some(acl_user) => acl_user.check_password(password),
             None => Err(RedisError::KeyNotFound(user.to_string())),
+        }
+    }
+
+    pub fn default_user_has_nopass(&self) -> bool {
+        let users = self.users.read().expect("users lock poisoned");
+        match users.get(&Arc::from("default")) {
+            Some(acl_user) => {
+                if let Some(RedisValue::Flags(flags)) = acl_user.properties.get(&Arc::from("flags")) {
+                    flags.contains(&Arc::from("nopass"))
+                } else {
+                    false
+                }
+            }
+            None => false,
         }
     }
 }
@@ -1236,11 +1273,14 @@ impl RedisState<Arc<str>, RedisValue>{
         }
     }
 
-    pub fn auth(&mut self, commands: &Vec<Arc<str>>) -> RedisResult<String> {
+    pub fn auth(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, commands: &Vec<Arc<str>>) -> RedisResult<String> {
         let username = &commands[1];
         let password = &commands[2];
         match self.users_state.check_password(username, password){
-            Ok(true) => Ok("+OK\r\n".to_string()),
+            Ok(true) => {
+                client_state.set_authenticated(true);
+                Ok("+OK\r\n".to_string())
+            },
             Ok(false) => Ok(format!("-WRONGPASS wrong password\r\n")),
             Err(e) => Err(e),
         }

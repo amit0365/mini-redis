@@ -44,7 +44,9 @@ pub async fn handle_client_connection(
     let mut buf = [0; 512];
     let mut local_state = state;
     let mut local_replicas_state = replicas_state;
-    let mut client_state = ClientState::new();
+    // New connections are authenticated only if default user has nopass flag
+    let is_authenticated = local_state.users_state().default_user_has_nopass();
+    let mut client_state = ClientState::new(is_authenticated);
  
     loop {
         let result = if client_state.is_subscribe_mode() {

@@ -194,7 +194,7 @@ pub async fn initialize_replica_connection(
         let mut expecting_rdb = false;
         let mut local_state = state;
         let mut local_replicas_state = replicas_state;
-        let mut client_state = ClientState::new();
+        let mut client_state = ClientState::new(true); // Replica connection to master is authenticated
         client_state.set_replica(true); //replica marks itself 
 
         let num_replica = local_replicas_state.num_connected_replicas();
