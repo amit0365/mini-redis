@@ -6,6 +6,7 @@ mod utils;
 mod commands;
 mod client;
 mod error;
+mod rdb;
 
 
 #[tokio::main]
@@ -22,6 +23,19 @@ async fn main() {
     let connection_count = Arc::new(AtomicUsize::new(0));
     let mut state = RedisState::new();
     let replicas_state = ReplicasState::new();
+
+    // Load RDB file if dir and dbfilename are specified
+    if let (Some(dir), Some(dbfilename)) = (&config.dir, &config.dbfilename) {
+        match rdb::load_rdb_file(dir, dbfilename) {
+            Ok(data) => {
+                state.load_rdb_data(data);
+                println!("Loaded {} keys from RDB file", state.map_state().key_count());
+            }
+            Err(e) => {
+                eprintln!("Failed to load RDB file: {}", e);
+            }
+        }
+    }
 
     replication::configure_server_role(&config, &mut state, replicas_state.clone()).await;
 

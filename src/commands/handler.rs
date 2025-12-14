@@ -165,6 +165,7 @@ pub async fn execute_commands(
         "ACL" => local_state.acl(&commands)?,
         "AUTH" => local_state.auth(client_state, &commands)?,
         "CONFIG" => local_state.config(&commands)?,
+        "KEYS" => local_state.keys(&commands)?,
         _ => format!("$-1\r\n"), //todo fix
     };
 

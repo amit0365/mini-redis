@@ -460,6 +460,10 @@ impl<K> MapState<K, RedisValue>{
         let waiters = Arc::new(Mutex::new(HashMap::new()));
         MapState { map, waiters }
     }
+
+    pub fn key_count(&self) -> usize {
+        self.map.read().expect("map lock poisoned").len()
+    }
 }
 
 #[derive(Clone)]
@@ -591,6 +595,13 @@ impl RedisState<Arc<str>, RedisValue>{
         let sorted_set_state = SortedSetState::new();
         let users_state = UserState::new();
         RedisState { channels_state, map_state, list_state, server_state, sorted_set_state, users_state }
+    }
+
+    pub fn load_rdb_data(&mut self, data: HashMap<Arc<str>, RedisValue>) {
+        let mut map_guard = self.map_state().map.write().expect("map lock poisoned");
+        for (key, value) in data {
+            map_guard.insert(key, value);
+        }
     }
 
     pub fn psync(&self) -> RedisResult<String> {
@@ -1301,6 +1312,11 @@ impl RedisState<Arc<str>, RedisValue>{
         }
     }
 
+    pub fn keys(&self, _commands: &Vec<Arc<str>>) -> RedisResult<String> {
+        let map_guard = self.map_state().map.read()?;
+        let keys: Vec<&Arc<str>> = map_guard.keys().collect();
+        Ok(encode_resp_ref_array_arc(&keys))
+    }
 
     pub fn subscribe(&mut self, client_state: &mut ClientState<Arc<str>, Arc<str>>, client: &Arc<str>, commands: &Vec<Arc<str>>) -> RedisResult<String>{
         client_state.set_subscribe_mode(true);

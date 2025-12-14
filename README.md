@@ -22,8 +22,9 @@ A Redis server implementation written from scratch in Rust using Tokio. This pro
 - **Geospatial:** `GEOADD`, `GEOPOS`, `GEODIST`, `GEOSEARCH`
 - **Transactions:** `MULTI`, `EXEC`, `DISCARD`
 - **Pub/Sub:** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`
-- **Connection:** `PING`, `ECHO`
+- **Connection:** `PING`, `ECHO`, `AUTH`
 - **Server:** `INFO`, `TYPE`, `WAIT`
+- **ACL:** `ACL WHOAMI`, `ACL GETUSER`
 - **Replication:** `REPLCONF`, `PSYNC` (master-replica replication)
 
 ### Core Stages
@@ -99,6 +100,16 @@ A Redis server implementation written from scratch in Rust using Tokio. This pro
 - Publish a message
 - Deliver messages
 - Unsubscribe
+
+### Authentication
+- Respond to ACL WHOAMI
+- Respond to ACL GETUSER
+- The nopass flag
+- The passwords property
+- Setting default user password
+- The AUTH command
+- Enforce authentication
+- Authenticate using AUTH
 
 ### Sorted Sets
 - Create a sorted set
