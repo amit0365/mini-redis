@@ -1240,7 +1240,7 @@ impl RedisState<Arc<str>, RedisValue>{
         let password = &commands[2];
         match self.users_state.check_password(username, password){
             Ok(true) => Ok("+OK\r\n".to_string()),
-            Ok(false) => Ok(format!("WRONGPASS wrong password\r\n")),
+            Ok(false) => Ok(format!("-WRONGPASS wrong password\r\n")),
             Err(e) => Err(e),
         }
     }
