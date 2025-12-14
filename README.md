@@ -2,6 +2,10 @@
 
 A Redis server implementation written from scratch in Rust using Tokio. This project implements a subset of Redis's functionality, focusing on core commands, data structures, replication, and pub/sub. This project was built as part of the [Build your own Redis](https://app.codecrafters.io/courses/redis/overview).
 
+## Demo
+
+<video src="redis-demo.mov" controls width="100%"></video>
+
 ## Architecture
 
 - Built with **Tokio** for async I/O and runtime

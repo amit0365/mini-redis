@@ -460,10 +460,6 @@ impl<K> MapState<K, RedisValue>{
         let waiters = Arc::new(Mutex::new(HashMap::new()));
         MapState { map, waiters }
     }
-
-    pub fn key_count(&self) -> usize {
-        self.map.read().expect("map lock poisoned").len()
-    }
 }
 
 #[derive(Clone)]
