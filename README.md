@@ -9,6 +9,7 @@ A Redis server implementation written from scratch in Rust using Tokio. This pro
 - Implements master-replica replication with PSYNC and RDB snapshots
 - Pub/Sub messaging with channel-based communication
 - Transaction support with command queueing
+- RDB file persistence with expiry support
 - Rate Limit to max 10,000 concurrent connections
 
 ## Features
@@ -23,9 +24,9 @@ A Redis server implementation written from scratch in Rust using Tokio. This pro
 - **Transactions:** `MULTI`, `EXEC`, `DISCARD`
 - **Pub/Sub:** `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`
 - **Connection:** `PING`, `ECHO`, `AUTH`
-- **Server:** `INFO`, `TYPE`, `WAIT`
+- **Server:** `INFO`, `TYPE`, `WAIT`, `CONFIG`, `KEYS`
 - **ACL:** `ACL WHOAMI`, `ACL GETUSER`
-- **Replication:** `REPLCONF`, `PSYNC` (master-replica replication)
+- **Replication:** `REPLCONF`, `PSYNC` (master-slave replication)
 
 ### Core Stages
 - Bind to a port
@@ -110,6 +111,14 @@ A Redis server implementation written from scratch in Rust using Tokio. This pro
 - The AUTH command
 - Enforce authentication
 - Authenticate using AUTH
+
+### RDB Persistence
+- RDB file config
+- Read a key
+- Read a string value
+- Read multiple keys
+- Read multiple string values
+- Read value with expiry
 
 ### Sorted Sets
 - Create a sorted set

@@ -17,12 +17,12 @@ const RDB_OPCODE_RESIZEDB: u8 = 0xFB;
 
 const RDB_TYPE_STRING: u8 = 0;
 
-pub struct RdbParser<R> {
+struct RdbParser<R> {
     reader: R,
 }
 
 impl<R: Read> RdbParser<R> {
-    pub fn new(reader: R) -> Self {
+    fn new(reader: R) -> Self {
         RdbParser { reader }
     }
 
@@ -83,7 +83,7 @@ impl<R: Read> RdbParser<R> {
         }
     }
 
-    pub fn parse(&mut self) -> RedisResult<HashMap<Arc<str>, RedisValue>> {
+    fn parse(&mut self) -> RedisResult<HashMap<Arc<str>, RedisValue>> {
         // Skip header (REDIS + 4 digit version)
         self.read_bytes(9)?;
 

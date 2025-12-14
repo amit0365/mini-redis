@@ -29,7 +29,6 @@ async fn main() {
         match rdb::load_rdb_file(dir, dbfilename) {
             Ok(data) => {
                 state.load_rdb_data(data);
-                println!("Loaded {} keys from RDB file", state.map_state().key_count());
             }
             Err(e) => {
                 eprintln!("Failed to load RDB file: {}", e);
