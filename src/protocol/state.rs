@@ -496,8 +496,9 @@ impl AclUser<Arc<str>>{
     }
 
     fn check_password(&self, password: &Arc<str>) -> RedisResult<bool>{
+        let hashed_password = format!("{:x}", Sha256::digest(password.as_bytes()));
         match self.properties.get(&Arc::from("passwords")){
-            Some(passwords) => passwords.array_contains(password),
+            Some(passwords) => passwords.array_contains(hashed_password),
             None => Err(RedisError::KeyNotFound("passwords".to_string())),
         }
     }
